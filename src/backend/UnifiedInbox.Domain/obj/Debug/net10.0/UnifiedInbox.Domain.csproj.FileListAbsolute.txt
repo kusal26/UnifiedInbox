@@ -1,0 +1,11 @@
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\bin\Debug\net10.0\UnifiedInbox.Domain.deps.json
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\bin\Debug\net10.0\UnifiedInbox.Domain.dll
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\bin\Debug\net10.0\UnifiedInbox.Domain.pdb
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\UnifiedInbox.Domain.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\UnifiedInbox.Domain.AssemblyInfoInputs.cache
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\UnifiedInbox.Domain.AssemblyInfo.cs
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\UnifiedInbox.Domain.csproj.CoreCompileInputs.cache
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\UnifiedInbox.Domain.dll
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\refint\UnifiedInbox.Domain.dll
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\UnifiedInbox.Domain.pdb
+C:\Users\LENOVO\Downloads\unifiedInbox\.worktrees\unified-inbox-mvp\src\backend\UnifiedInbox.Domain\obj\Debug\net10.0\ref\UnifiedInbox.Domain.dll

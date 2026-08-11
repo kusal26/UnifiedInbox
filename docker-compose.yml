@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: unified_inbox
+      POSTGRES_USER: unified_inbox
+      POSTGRES_PASSWORD: local_only_password
+    ports: ["5432:5432"]
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports: ["5672:5672", "15672:15672"]
+  redis:
+    image: redis:8
+    ports: ["6379:6379"]
