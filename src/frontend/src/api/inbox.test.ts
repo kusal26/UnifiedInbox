@@ -21,4 +21,37 @@ describe('createInboxApi', () => {
       body: JSON.stringify({ body: 'Hello' }),
     });
   });
+
+  it('converts numeric conversation statuses at the API boundary', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: 'c1', contactName: 'Jamie', platform: 'whatsapp', preview: 'Hi', status: 1, unread: true, updatedAt: '2026-01-01T00:00:00Z' },
+    ])));
+
+    await expect(createInboxApi(() => 'token-1', fetcher).listConversations()).resolves.toMatchObject([
+      { id: 'c1', status: 'Pending' },
+    ]);
+  });
+
+  it('converts numeric activity enums and maps senderUserId to authorId', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      items: [{ id: 'm1', conversationId: 'c1', kind: 0, body: 'Hello', createdAt: '2026-01-01T00:00:00Z', sequence: 2, senderUserId: 'user-1', status: 2 }],
+      nextCursor: null,
+    })));
+
+    await expect(createInboxApi(() => 'token-1', fetcher).getActivity('c1')).resolves.toEqual({
+      items: [expect.objectContaining({ kind: 'Message', authorId: 'user-1', status: 'Sent' })],
+      nextCursor: null,
+    });
+  });
+
+  it('sends numeric statuses expected by the ASP.NET stub', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'c1', status: 0 })));
+
+    await createInboxApi(() => 'token-1', fetcher).setStatus('c1', 'Open');
+
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/conversations/c1/status', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ status: 0 }),
+    }));
+  });
 });
