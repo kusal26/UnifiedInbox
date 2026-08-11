@@ -5,7 +5,7 @@ export const appRoutes: AppRoute[] = [
   { path: '/overview', label: 'Overview' },
   { path: '/channels', label: 'Channels' },
   { path: '/team', label: 'Team' },
-  { path: '/canned-responses', label: 'Canned Responses' },
-  { path: '/audit-log', label: 'Audit Log' },
+  { path: '/canned', label: 'Canned Responses' },
+  { path: '/audit', label: 'Audit Log' },
   { path: '/settings', label: 'Settings' },
 ];
