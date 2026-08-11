@@ -182,6 +182,8 @@ UpdatedAt             DateTime
 UNIQUE (TenantId, Platform, ChannelId, ExternalPlatformUserId)
 ```
 
+Because `ChannelId` is nullable, uniqueness is enforced with a partial index on non-null `ChannelId` rows. Rows with `ChannelId` NULL are deduplicated in the Application layer (lookup by `TenantId + Platform + ExternalPlatformUserId`) to avoid over-merging contacts.
+
 #### Conversation
 
 ```text
@@ -207,7 +209,8 @@ There is intentionally **no `AssignedUserId`**. There is no conversation owner.
 Id                  Guid
 TenantId            Guid
 ConversationId      Guid
-ExternalMessageId   string
+ExternalMessageId   string?         # provider-assigned; null until provider responds for outbound
+IdempotencyKey      string?         # client-supplied, used for outbound dedupe (see §6.2)
 SenderType          SenderType (Customer | Staff | System)
 SenderUserId        Guid?          # staff id when SenderType == Staff, else null
 MessageType         MessageType (Text | Image | Video | Audio | Document | ...)
@@ -219,9 +222,10 @@ CreatedAt           DateTime
 DeliveryStatus      DeliveryStatus?  # outbound only, where provider supports
 
 UNIQUE (ConversationId, ExternalMessageId)
+UNIQUE (ConversationId, IdempotencyKey)   # partial index where IdempotencyKey IS NOT NULL
 ```
 
-Message deduplication key: `ChannelId + ExternalMessageId` per the PRD. Because every conversation belongs to exactly one channel, the equivalent `(ConversationId, ExternalMessageId)` unique index enforces the same invariant. The Application layer checks this idempotency key before persisting a normalized message.
+Message deduplication key: `ChannelId + ExternalMessageId` per the PRD. Because every conversation belongs to exactly one channel, the equivalent `(ConversationId, ExternalMessageId)` unique index enforces the same invariant. The Application layer checks this idempotency key before persisting a normalized message. Inbound messages always carry `ExternalMessageId`; outbound messages may be null until the provider responds, so outbound dedupe relies on `IdempotencyKey` instead.
 
 #### Attachment
 
@@ -384,7 +388,8 @@ conversations        (TenantId), (ChannelId, ExternalConversationId) UNIQUE,
 messages             (TenantId), (ConversationId, CreatedAt), (ConversationId, ExternalMessageId) UNIQUE,
                      (ExternalMessageId)
 internal_notes       (TenantId), (ConversationId, CreatedAt)
-webhook_events       (TenantId), (ChannelId), (Status), (ReceivedAt)
+webhook_events       (TenantId), (ChannelId), (Status), (ReceivedAt),
+                     (ChannelId, ExternalEventId) UNIQUE
 notifications        (TenantId, UserId, ReadAt)
 audit_logs           (TenantId, Timestamp)
 ```
@@ -550,7 +555,8 @@ Default behavior: a new inbound customer message on a closed conversation sets s
 ```text
 Staff sends reply
    ↓
-POST /api/v1/conversations/{id}/messages (Direction=Outbound, SenderType=Staff)
+POST /api/v1/conversations/{id}/messages (Direction=Outbound, SenderType=Staff,
+      content + IdempotencyKey + optional attachment IDs from POST /api/v1/attachments)
    ↓
 Create Message row, DeliveryStatus = Pending
    ↓
@@ -714,6 +720,7 @@ All roles are restricted to their own tenant.
 ### 8.3 Pagination & Filtering
 
 - Conversation list supports status filter (`All/Open/Pending/Closed/Unread`) and platform filter (`Facebook/Instagram/WhatsApp/TikTok`).
+- Search fields (PRD §43): customer name, phone number, platform username/handle, message content, conversation ID.
 - No assignment filters exist (`Assigned to me`, `My conversations` are intentionally absent).
 - Cursor or offset pagination on conversation and message lists.
 
