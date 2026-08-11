@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState, type PropsWithChildren } from 'react';
-import { createInboxApi, type LoginCredentials } from '../api/inbox';
+import { createInboxApi, type LoginCredentials, type LoginResponse } from '../api/inbox';
 
 export interface AuthContextValue {
   token: string | null;
@@ -9,16 +9,20 @@ export interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: PropsWithChildren) {
+interface AuthProviderProps extends PropsWithChildren {
+  login?: (credentials: LoginCredentials) => Promise<LoginResponse | void>;
+}
+
+export function AuthProvider({ children, login: loginRequest }: AuthProviderProps) {
   const [token, setToken] = useState<string | null>(null);
   const value = useMemo<AuthContextValue>(() => ({
     token,
     async login(credentials) {
-      const response = await createInboxApi(() => null).login(credentials);
-      setToken(response.accessToken);
+      const response = await (loginRequest ?? createInboxApi(() => null).login)(credentials);
+      setToken(response?.accessToken ?? 'workspace-session');
     },
     logout: () => setToken(null),
-  }), [token]);
+  }), [loginRequest, token]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

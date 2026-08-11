@@ -3,7 +3,11 @@ import { NavLink } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { appRoutes } from './routes';
 
-export function AppShell({ children }: PropsWithChildren) {
+interface AppShellProps extends PropsWithChildren {
+  onLogout(): void;
+}
+
+export function AppShell({ children, onLogout }: AppShellProps) {
   return <div className="workspace-shell">
     <aside className="workspace-rail" aria-label="Workspace navigation">
       <NavLink className="workspace-mark" to="/" aria-label="Unified Inbox home">
@@ -32,7 +36,7 @@ export function AppShell({ children }: PropsWithChildren) {
             <input type="search" placeholder="Search" aria-label="Search workspace" />
           </label>
           <button className="icon-button" type="button" aria-label="Notifications"><Icon name="bell" /></button>
-          <button className="logout-button" type="button"><Icon name="log-out" /> <span>Log out</span></button>
+          <button className="logout-button" type="button" onClick={onLogout}><Icon name="log-out" /> <span>Log out</span></button>
         </div>
       </header>
       <main className="workspace-content">{children}</main>

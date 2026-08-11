@@ -1,4 +1,6 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { LoginPage } from '../auth/LoginPage';
+import { useAuth } from '../auth/AuthProvider';
 import { AppShell } from './AppShell';
 import { appRoutes } from './routes';
 
@@ -8,10 +10,17 @@ function RoutePlaceholder({ label }: { label: string }) {
 
 export function App() {
   return <BrowserRouter>
-    <AppShell>
-      <Routes>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<ProtectedApp />}>
         {appRoutes.map((route) => <Route key={route.path} path={route.path} element={<RoutePlaceholder label={route.label} />} />)}
-      </Routes>
-    </AppShell>
+      </Route>
+    </Routes>
   </BrowserRouter>;
+}
+
+function ProtectedApp() {
+  const { token, logout } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  return <AppShell onLogout={logout}><Outlet /></AppShell>;
 }
