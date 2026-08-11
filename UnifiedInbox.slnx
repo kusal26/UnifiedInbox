@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/backend/">
+    <Project Path="src/backend/UnifiedInbox.Api/UnifiedInbox.Api.csproj" />
+    <Project Path="src/backend/UnifiedInbox.Application/UnifiedInbox.Application.csproj" />
+    <Project Path="src/backend/UnifiedInbox.Domain/UnifiedInbox.Domain.csproj" />
+    <Project Path="src/backend/UnifiedInbox.Infrastructure/UnifiedInbox.Infrastructure.csproj" />
+    <Project Path="src/backend/UnifiedInbox.Worker/UnifiedInbox.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/UnifiedInbox.Application.Tests/UnifiedInbox.Application.Tests.csproj" />
+    <Project Path="tests/UnifiedInbox.ArchitectureTests/UnifiedInbox.ArchitectureTests.csproj" />
+    <Project Path="tests/UnifiedInbox.Domain.Tests/UnifiedInbox.Domain.Tests.csproj" />
+    <Project Path="tests/UnifiedInbox.IntegrationTests/UnifiedInbox.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
