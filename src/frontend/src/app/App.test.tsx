@@ -8,7 +8,7 @@ import { App } from './App';
 describe('App', () => {
   it('navigates to Channels by keyboard and marks the active workspace link', async () => {
     window.history.pushState({}, '', '/');
-    render(<AuthProvider login={async () => undefined}><App /></AuthProvider>);
+    render(<AuthProvider login={async () => ({ accessToken: 'test-token' })}><App /></AuthProvider>);
 
     await userEvent.type(screen.getByLabelText('Workspace slug'), 'acme');
     await userEvent.type(screen.getByLabelText('Email'), 'agent@acme.test');

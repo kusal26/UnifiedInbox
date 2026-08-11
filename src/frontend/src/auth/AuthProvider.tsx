@@ -10,7 +10,7 @@ export interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 interface AuthProviderProps extends PropsWithChildren {
-  login?: (credentials: LoginCredentials) => Promise<LoginResponse | void>;
+  login?: (credentials: LoginCredentials) => Promise<LoginResponse>;
 }
 
 export function AuthProvider({ children, login: loginRequest }: AuthProviderProps) {
@@ -19,7 +19,7 @@ export function AuthProvider({ children, login: loginRequest }: AuthProviderProp
     token,
     async login(credentials) {
       const response = await (loginRequest ?? createInboxApi(() => null).login)(credentials);
-      setToken(response?.accessToken ?? 'workspace-session');
+      setToken(response.accessToken);
     },
     logout: () => setToken(null),
   }), [loginRequest, token]);
