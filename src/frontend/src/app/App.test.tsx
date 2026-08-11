@@ -1,13 +1,16 @@
-import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryRouter } from 'react-router-dom';
+import '@testing-library/jest-dom/vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { AppShell } from './AppShell';
+import { App } from './App';
 
 describe('App', () => {
-  it('marks Channels as the active workspace link', () => {
-    const markup = renderToStaticMarkup(<MemoryRouter initialEntries={['/channels']}><AppShell><h1>Channels</h1></AppShell></MemoryRouter>);
+  it('navigates to Channels and marks the active workspace link', () => {
+    window.history.pushState({}, '', '/');
+    render(<App />);
 
-    expect(markup).toContain('<h1>Channels</h1>');
-    expect(markup).toMatch(/aria-current="page"[^>]*href="\/channels"/);
+    fireEvent.click(screen.getByRole('link', { name: 'Channels' }));
+
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Channels' })).toHaveAttribute('aria-current', 'page');
   });
 });

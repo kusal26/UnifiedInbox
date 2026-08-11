@@ -7,5 +7,8 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:5080',
       '/hubs': 'http://127.0.0.1:5080'
     }
+  },
+  test: {
+    environment: 'jsdom'
   }
 });
