@@ -1,16 +1,20 @@
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { App } from './App';
 
 describe('App', () => {
-  it('navigates to Channels and marks the active workspace link', () => {
+  it('navigates to Channels by keyboard and marks the active workspace link', async () => {
     window.history.pushState({}, '', '/');
     render(<App />);
 
-    fireEvent.click(screen.getByRole('link', { name: 'Channels' }));
+    const channels = screen.getByRole('link', { name: 'Channels' });
+    channels.focus();
+    expect(channels).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
 
     expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Channels' })).toHaveAttribute('aria-current', 'page');
+    expect(channels).toHaveAttribute('aria-current', 'page');
   });
 });

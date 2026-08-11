@@ -12,6 +12,7 @@ export function AppShell({ children }: PropsWithChildren) {
       </NavLink>
       <nav aria-label="Primary navigation">
         {appRoutes.map((route) => <NavLink className="workspace-nav-link" key={route.path} to={route.path} end={route.path === '/'}>
+          <Icon name={route.icon} />
           <span>{route.label}</span>
           {route.path === '/' && <b aria-label="12 unread conversations">12</b>}
         </NavLink>)}
