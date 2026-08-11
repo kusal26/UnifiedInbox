@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unified Inbox — Prototype</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --panel2:#f9fafb; --line:#e5e7eb; --text:#111827;
+  --muted:#6b7280; --accent:#2563eb; --accent2:#eff6ff; --green:#16a34a; --greenbg:#ecfdf3;
+  --orange:#d97706; --orangebg:#fff7ed; --red:#dc2626; --redbg:#fef2f2; --purple:#7c3aed;
+  --shadow:0 1px 3px rgba(15,23,42,.07),0 8px 24px rgba(15,23,42,.04);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:var(--bg);font-size:14px}
+button,input,textarea,select{font:inherit}
+button{cursor:pointer}
+.app{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:240px;background:#111827;color:#d1d5db;display:flex;flex-direction:column;flex-shrink:0}
+.brand{height:68px;padding:0 20px;display:flex;align-items:center;gap:11px;color:white;font-weight:750;font-size:17px;border-bottom:1px solid #273244}
+.logo{width:34px;height:34px;border-radius:10px;background:#2563eb;display:grid;place-items:center;color:#fff;font-weight:800}
+.workspace{padding:15px 16px;border-bottom:1px solid #273244}
+.workspace small{display:block;color:#9ca3af;font-size:11px;margin-bottom:5px}
+.workspace strong{display:block;color:white}
+.nav{padding:13px 10px;flex:1}
+.nav-section{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;padding:12px 10px 7px}
+.nav button{width:100%;border:0;background:transparent;color:#cbd5e1;text-align:left;padding:10px 11px;border-radius:8px;display:flex;align-items:center;gap:11px;margin:2px 0}
+.nav button:hover,.nav button.active{background:#1f2937;color:white}
+.nav button.active{box-shadow:inset 3px 0 #3b82f6}
+.icon{width:18px;text-align:center;opacity:.9}
+.badge{margin-left:auto;min-width:21px;padding:2px 6px;border-radius:10px;background:#374151;color:#e5e7eb;text-align:center;font-size:11px}
+.user{padding:13px 15px;border-top:1px solid #273244;display:flex;gap:10px;align-items:center}
+.avatar{width:32px;height:32px;border-radius:50%;background:#dbeafe;color:#1d4ed8;display:grid;place-items:center;font-weight:700;flex-shrink:0}
+.user small{color:#9ca3af}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{height:68px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 22px;gap:15px}
+.topbar h1{font-size:18px;margin:0}
+.topbar .spacer{flex:1}
+.search-global{width:290px;border:1px solid var(--line);background:var(--panel2);border-radius:9px;padding:9px 12px;outline:none}
+.icon-btn{width:36px;height:36px;border:1px solid var(--line);background:white;border-radius:8px}
+.content{flex:1;min-height:0;overflow:hidden}
+.view{height:100%;display:none}
+.view.active{display:flex}
+.inbox{display:grid;grid-template-columns:310px minmax(420px,1fr) 270px;width:100%;height:100%}
+.list-panel,.profile-panel{background:#fff;overflow:hidden}
+.list-panel{border-right:1px solid var(--line);display:flex;flex-direction:column}
+.profile-panel{border-left:1px solid var(--line);padding:20px;overflow:auto}
+.list-head{padding:15px;border-bottom:1px solid var(--line)}
+.list-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.list-title strong{font-size:15px}
+.search{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#f9fafb;outline:none}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.filter{border:1px solid var(--line);background:white;border-radius:7px;padding:5px 8px;color:var(--muted);font-size:11px}
+.filter.active{background:var(--accent2);color:var(--accent);border-color:#bfdbfe}
+.conversations{overflow:auto;flex:1}
+.conv{padding:13px 14px;border-bottom:1px solid #f0f1f3;cursor:pointer;display:flex;gap:10px}
+.conv:hover{background:#fafafa}.conv.selected{background:#f0f6ff;border-left:3px solid var(--accent);padding-left:11px}
+.conv-avatar{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-weight:700;flex-shrink:0}
+.wa{background:#dcfce7;color:#15803d}.ig{background:#f3e8ff;color:#7e22ce}.fb{background:#dbeafe;color:#1d4ed8}.tt{background:#e5e7eb;color:#111827}
+.conv-body{min-width:0;flex:1}.conv-top{display:flex;justify-content:space-between;gap:8px}.conv-name{font-weight:650}.time{font-size:10px;color:#9ca3af;white-space:nowrap}
+.preview{font-size:12px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.conv-meta{display:flex;gap:5px;align-items:center;margin-top:7px}.channel-dot{font-size:10px}.status{font-size:10px;padding:3px 6px;border-radius:20px}
+.status.open{color:#166534;background:#dcfce7}.status.pending{color:#92400e;background:#fef3c7}.status.closed{color:#4b5563;background:#f3f4f6}
+.unread{margin-left:auto;background:#2563eb;color:white;border-radius:10px;padding:1px 6px;font-size:10px}
+.chat{display:flex;flex-direction:column;min-width:0;background:#f8fafc}
+.chat-head{background:#fff;border-bottom:1px solid var(--line);padding:13px 18px;display:flex;align-items:center;gap:12px}
+.chat-head .head-info{min-width:0}.head-info strong{display:block}.head-info span{font-size:11px;color:var(--muted)}
+.head-actions{margin-left:auto;display:flex;gap:7px}
+.messages{flex:1;overflow:auto;padding:22px 28px}
+.day{text-align:center;color:#9ca3af;font-size:10px;margin:5px 0 18px}
+.msg-row{display:flex;margin:9px 0}.msg-row.customer{justify-content:flex-start}.msg-row.staff{justify-content:flex-end}.msg-row.note{justify-content:center}
+.bubble{max-width:min(72%,560px);padding:10px 12px;border-radius:12px;box-shadow:0 1px 1px rgba(0,0,0,.03);line-height:1.45}
+.customer .bubble{background:white;border:1px solid var(--line);border-top-left-radius:4px}
+.staff .bubble{background:#2563eb;color:white;border-top-right-radius:4px}
+.note .bubble{background:#fff7ed;color:#7c2d12;border:1px solid #fed7aa;max-width:75%;font-size:12px}
+.msg-meta{font-size:10px;color:#9ca3af;margin-top:4px;display:flex;gap:7px}.staff .msg-meta{justify-content:flex-end;color:#bfdbfe}
+.note .msg-meta{color:#b45309}
+.composer{background:#fff;border-top:1px solid var(--line);padding:12px 16px}
+.composer-tools{display:flex;gap:6px;margin-bottom:7px}
+.tool{border:0;background:#f3f4f6;color:#4b5563;border-radius:7px;padding:6px 8px;font-size:11px}
+.composer-row{display:flex;gap:8px;align-items:flex-end}
+textarea{flex:1;resize:none;min-height:42px;max-height:100px;border:1px solid var(--line);border-radius:9px;padding:10px 12px;outline:none}
+.send{border:0;background:#2563eb;color:white;border-radius:9px;padding:11px 16px;font-weight:650}
+.note-mode{background:#fff7ed!important;border-color:#fed7aa!important}
+.profile-head{text-align:center;border-bottom:1px solid var(--line);padding-bottom:18px}
+.profile-big{width:64px;height:64px;border-radius:50%;margin:0 auto 10px;display:grid;place-items:center;font-size:20px;font-weight:750;background:#dbeafe;color:#1d4ed8}
+.profile-head h3{margin:4px 0}.profile-head p{margin:0;color:var(--muted);font-size:12px}
+.profile-section{padding:16px 0;border-bottom:1px solid var(--line)}.profile-section h4{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin:0 0 11px}
+.info{display:flex;justify-content:space-between;gap:10px;margin:8px 0}.info span:first-child{color:var(--muted)}.info span:last-child{text-align:right;font-weight:550}
+.action-row{display:flex;gap:7px;margin-top:10px}.small-btn{border:1px solid var(--line);background:white;border-radius:7px;padding:7px 9px;font-size:11px}
+.panel{background:white;margin:20px;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+.panel-head{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.panel-head h2{font-size:15px;margin:0}.panel-body{padding:18px}
+.dashboard-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:20px}
+.stat{background:white;border:1px solid var(--line);border-radius:11px;padding:15px;box-shadow:var(--shadow)}.stat small{color:var(--muted)}.stat strong{display:block;font-size:25px;margin-top:7px}
+.two-col{display:grid;grid-template-columns:1.2fr .8fr;gap:0}.bar{height:8px;background:#eef2f7;border-radius:10px;overflow:hidden}.bar i{display:block;height:100%;background:#2563eb;border-radius:10px}
+.settings-layout{display:grid;grid-template-columns:210px 1fr;height:100%;overflow:hidden}
+.settings-nav{background:white;border-right:1px solid var(--line);padding:18px}.settings-nav button{width:100%;text-align:left;border:0;background:transparent;padding:10px;border-radius:7px;margin-bottom:3px}.settings-nav button.active{background:var(--accent2);color:var(--accent);font-weight:650}
+.settings-content{overflow:auto;padding:20px}
+.channel-card{display:flex;align-items:center;gap:13px;border:1px solid var(--line);padding:14px;border-radius:10px;margin-bottom:10px}.channel-card .grow{flex:1}.channel-card strong{display:block}.channel-card small{color:var(--muted)}
+.toggle{width:42px;height:23px;border-radius:20px;background:#d1d5db;position:relative;border:0}.toggle.on{background:#2563eb}.toggle:after{content:"";width:17px;height:17px;background:white;border-radius:50%;position:absolute;top:3px;left:3px;transition:.15s}.toggle.on:after{left:22px}
+.table{width:100%;border-collapse:collapse}.table th,.table td{padding:11px;border-bottom:1px solid var(--line);text-align:left}.table th{font-size:11px;color:var(--muted);font-weight:600}.table td{font-size:13px}
+.toast{position:fixed;right:20px;bottom:20px;background:#111827;color:white;padding:11px 15px;border-radius:9px;box-shadow:var(--shadow);opacity:0;transform:translateY(10px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:translateY(0)}
+@media(max-width:1000px){.inbox{grid-template-columns:290px minmax(380px,1fr)}.profile-panel{display:none}.dashboard-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.sidebar{width:64px}.brand span,.workspace,.nav-section,.nav button span,.user div{display:none}.brand{justify-content:center;padding:0}.nav button{justify-content:center}.user{justify-content:center}.topbar{padding:0 12px}.search-global{width:160px}.inbox{grid-template-columns:1fr}.list-panel{display:none}.chat{display:flex}.dashboard-grid{grid-template-columns:1fr}.settings-layout{grid-template-columns:1fr}.settings-nav{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">U</div><span>Unified Inbox</span></div>
+    <div class="workspace"><small>WORKSPACE</small><strong>ABC Retail</strong></div>
+    <nav class="nav">
+      <div class="nav-section">Workspace</div>
+      <button class="active" data-view="inbox"><span class="icon">▣</span><span>Shared Inbox</span><b class="badge">12</b></button>
+      <button data-view="dashboard"><span class="icon">◫</span><span>Overview</span></button>
+      <div class="nav-section">Manage</div>
+      <button data-view="channels"><span class="icon">◎</span><span>Channels</span></button>
+      <button data-view="team"><span class="icon">♙</span><span>Team</span></button>
+      <button data-view="canned"><span class="icon">✦</span><span>Canned Responses</span></button>
+      <button data-view="audit"><span class="icon">◷</span><span>Audit Log</span></button>
+      <div class="nav-section">System</div>
+      <button data-view="settings"><span class="icon">⚙</span><span>Settings</span></button>
+    </nav>
+    <div class="user"><div class="avatar">K</div><div><strong style="color:white">Kusal</strong><br><small>Owner</small></div></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="pageTitle">Shared Inbox</h1>
+      <div class="spacer"></div>
+      <input class="search-global" id="globalSearch" placeholder="Search conversations…">
+      <button class="icon-btn" onclick="notify('No new notifications')">♢</button>
+      <button class="icon-btn" onclick="notify('Workspace menu opened')">•••</button>
+    </header>
+
+    <section class="content">
+      <div id="inbox" class="view active">
+        <div class="inbox">
+          <section class="list-panel">
+            <div class="list-head">
+              <div class="list-title"><strong>Conversations</strong><button class="small-btn" onclick="notify('New conversation action')">＋</button></div>
+              <input class="search" id="convSearch" placeholder="Search name, phone, message…">
+              <div class="filters">
+                <button class="filter active" data-filter="all">All</button>
+                <button class="filter" data-filter="open">Open</button>
+                <button class="filter" data-filter="pending">Pending</button>
+                <button class="filter" data-filter="closed">Closed</button>
+                <button class="filter" data-filter="unread">Unread</button>
+              </div>
+            </div>
+            <div class="conversations" id="conversationList"></div>
+          </section>
+
+          <section class="chat">
+            <div class="chat-head">
+              <div id="chatAvatar" class="conv-avatar wa">JD</div>
+              <div class="head-info"><strong id="chatName">John Doe</strong><span id="chatChannel">WhatsApp · +977 9800000000</span></div>
+              <div class="head-actions">
+                <button class="small-btn" id="statusBtn" onclick="cycleStatus()">Open ▾</button>
+                <button class="small-btn" onclick="notify('Conversation details opened')">⋯</button>
+              </div>
+            </div>
+            <div class="messages" id="messages"></div>
+            <div class="composer">
+              <div class="composer-tools">
+                <button class="tool" onclick="toggleNote()">📝 Internal note</button>
+                <button class="tool" onclick="insertCanned()">✦ Canned response</button>
+                <button class="tool" onclick="notify('Attachment picker opened')">＋ Attachment</button>
+                <button class="tool" onclick="notify('Emoji picker opened')">☺</button>
+              </div>
+              <div class="composer-row">
+                <textarea id="composer" placeholder="Type a message…" rows="1"></textarea>
+                <button class="send" id="sendBtn" onclick="sendMessage()">Send</button>
+              </div>
+            </div>
+          </section>
+
+          <aside class="profile-panel">
+            <div class="profile-head">
+              <div class="profile-big" id="profileAvatar">JD</div>
+              <h3 id="profileName">John Doe</h3>
+              <p id="profilePlatform">WhatsApp customer</p>
+            </div>
+            <div class="profile-section">
+              <h4>Customer</h4>
+              <div class="info"><span>Phone</span><span id="profilePhone">+977 9800000000</span></div>
+              <div class="info"><span>Email</span><span id="profileEmail">john@example.com</span></div>
+              <div class="info"><span>Platform ID</span><span>wa_104829</span></div>
+            </div>
+            <div class="profile-section">
+              <h4>Conversation</h4>
+              <div class="info"><span>Status</span><span id="profileStatus">Open</span></div>
+              <div class="info"><span>Unread</span><span id="profileUnread">2 messages</span></div>
+              <div class="info"><span>Channel</span><span>WhatsApp</span></div>
+            </div>
+            <div class="profile-section">
+              <h4>Customer notes</h4>
+              <p style="color:var(--muted);font-size:12px;line-height:1.5">Interested in bulk pricing. May also ask about delivery.</p>
+              <button class="small-btn" onclick="notify('Customer note editor opened')">Edit notes</button>
+            </div>
+            <div class="profile-section">
+              <h4>Shared visibility</h4>
+              <p style="color:var(--muted);font-size:12px;line-height:1.5">All authorized ABC Retail staff can see this conversation. There is no assigned agent.</p>
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <div id="dashboard" class="view">
+        <div style="width:100%;overflow:auto">
+          <div class="dashboard-grid">
+            <div class="stat"><small>Total conversations</small><strong>128</strong><span style="color:var(--green);font-size:11px">↑ 12% this week</span></div>
+            <div class="stat"><small>Open</small><strong>34</strong><span style="color:var(--muted);font-size:11px">26.5% of total</span></div>
+            <div class="stat"><small>Unread</small><strong>12</strong><span style="color:var(--orange);font-size:11px">Needs attention</span></div>
+            <div class="stat"><small>Messages sent</small><strong>1,842</strong><span style="color:var(--green);font-size:11px">98.7% delivered</span></div>
+          </div>
+          <div class="two-col">
+            <div class="panel">
+              <div class="panel-head"><h2>Channel activity</h2><button class="small-btn">Last 7 days</button></div>
+              <div class="panel-body">
+                <div style="margin-bottom:17px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>WhatsApp</span><strong>62%</strong></div><div class="bar"><i style="width:62%"></i></div></div>
+                <div style="margin-bottom:17px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Instagram</span><strong>24%</strong></div><div class="bar"><i style="width:24%"></i></div></div>
+                <div style="margin-bottom:17px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Messenger</span><strong>10%</strong></div><div class="bar"><i style="width:10%"></i></div></div>
+                <div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>TikTok</span><strong>4%</strong></div><div class="bar"><i style="width:4%"></i></div></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h2>Reliability</h2></div>
+              <div class="panel-body">
+                <div class="info"><span>Webhook success</span><span style="color:var(--green)">99.8%</span></div>
+                <div class="info"><span>Duplicate rate</span><span>0.02%</span></div>
+                <div class="info"><span>Outbound failure</span><span style="color:var(--green)">0.4%</span></div>
+                <div class="info"><span>Queue depth</span><span>7</span></div>
+                <div class="info"><span>Realtime latency</span><span>184 ms</span></div>
+                <div class="info"><span>Connected channels</span><span>4 / 4</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="channels" class="view">
+        <div style="width:100%;overflow:auto"><div class="panel">
+          <div class="panel-head"><h2>Connected channels</h2><button class="send" onclick="notify('Channel connection flow opened')">＋ Connect channel</button></div>
+          <div class="panel-body">
+            <div class="channel-card"><div class="conv-avatar wa">W</div><div class="grow"><strong>WhatsApp Business</strong><small>ABC Retail · Last webhook 30 seconds ago</small></div><span class="status open">Connected</span><button class="small-btn" onclick="notify('WhatsApp channel settings')">Manage</button></div>
+            <div class="channel-card"><div class="conv-avatar ig">◎</div><div class="grow"><strong>Instagram Direct</strong><small>@abc.retail · Last webhook 2 minutes ago</small></div><span class="status open">Connected</span><button class="small-btn" onclick="notify('Instagram channel settings')">Manage</button></div>
+            <div class="channel-card"><div class="conv-avatar fb">f</div><div class="grow"><strong>Facebook Messenger</strong><small>ABC Retail · Last webhook 5 minutes ago</small></div><span class="status open">Connected</span><button class="small-btn" onclick="notify('Messenger channel settings')">Manage</button></div>
+            <div class="channel-card"><div class="conv-avatar tt">♪</div><div class="grow"><strong>TikTok Direct</strong><small>@abcretail · Last sync 8 minutes ago</small></div><span class="status pending">Reauthorization</span><button class="small-btn" onclick="notify('TikTok reauthorization flow opened')">Reconnect</button></div>
+          </div>
+        </div></div>
+      </div>
+
+      <div id="team" class="view">
+        <div style="width:100%;overflow:auto"><div class="panel">
+          <div class="panel-head"><h2>Team members</h2><button class="send" onclick="notify('Invite staff dialog opened')">＋ Invite staff</button></div>
+          <div class="panel-body"><table class="table"><thead><tr><th>Member</th><th>Role</th><th>Status</th><th>Last active</th><th></th></tr></thead><tbody>
+            <tr><td><b>Kusal Thapa</b><br><small style="color:var(--muted)">kusal@abc.example</small></td><td>Owner</td><td><span class="status open">Active</span></td><td>Now</td><td><button class="small-btn">•••</button></td></tr>
+            <tr><td><b>Sita Sharma</b><br><small style="color:var(--muted)">sita@abc.example</small></td><td>Admin</td><td><span class="status open">Active</span></td><td>2 min ago</td><td><button class="small-btn">•••</button></td></tr>
+            <tr><td><b>Ram KC</b><br><small style="color:var(--muted)">ram@abc.example</small></td><td>Agent</td><td><span class="status open">Active</span></td><td>6 min ago</td><td><button class="small-btn">•••</button></td></tr>
+            <tr><td><b>Mina Gurung</b><br><small style="color:var(--muted)">mina@abc.example</small></td><td>Agent</td><td><span class="status closed">Offline</span></td><td>1 hour ago</td><td><button class="small-btn">•••</button></td></tr>
+          </tbody></table></div>
+        </div></div>
+      </div>
+
+      <div id="canned" class="view">
+        <div style="width:100%;overflow:auto"><div class="panel">
+          <div class="panel-head"><h2>Canned responses</h2><button class="send" onclick="notify('New canned response form opened')">＋ New response</button></div>
+          <div class="panel-body"><table class="table"><thead><tr><th>Title</th><th>Shortcut</th><th>Content</th><th>Updated</th><th></th></tr></thead><tbody>
+            <tr><td><b>Store Location</b></td><td>/location</td><td>Our store is located at New Road…</td><td>Today</td><td><button class="small-btn">Edit</button></td></tr>
+            <tr><td><b>Opening Hours</b></td><td>/hours</td><td>We are open Sunday–Friday, 10 AM–6 PM.</td><td>Yesterday</td><td><button class="small-btn">Edit</button></td></tr>
+            <tr><td><b>Delivery Information</b></td><td>/delivery</td><td>Delivery is available inside Kathmandu Valley…</td><td>3 days ago</td><td><button class="small-btn">Edit</button></td></tr>
+            <tr><td><b>Payment Methods</b></td><td>/payment</td><td>We accept cash, bank transfer and supported digital wallets.</td><td>1 week ago</td><td><button class="small-btn">Edit</button></td></tr>
+          </tbody></table></div>
+        </div></div>
+      </div>
+
+      <div id="audit" class="view">
+        <div style="width:100%;overflow:auto"><div class="panel">
+          <div class="panel-head"><h2>Audit log</h2><button class="small-btn">Filter</button></div>
+          <div class="panel-body"><table class="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Metadata</th></tr></thead><tbody>
+            <tr><td>10:34:12</td><td>Kusal</td><td>Message sent</td><td>Conversation #1042</td><td>WhatsApp</td></tr>
+            <tr><td>10:32:45</td><td>Sita</td><td>Internal note created</td><td>Conversation #1042</td><td>Bulk pricing</td></tr>
+            <tr><td>10:28:03</td><td>Kusal</td><td>Conversation status changed</td><td>Conversation #1041</td><td>Open → Closed</td></tr>
+            <tr><td>09:55:31</td><td>Kusal</td><td>Channel connected</td><td>WhatsApp</td><td>ABC Retail</td></tr>
+            <tr><td>09:40:19</td><td>Kusal</td><td>User created</td><td>Ram KC</td><td>Agent</td></tr>
+          </tbody></table></div>
+        </div></div>
+      </div>
+
+      <div id="settings" class="view">
+        <div class="settings-layout">
+          <div class="settings-nav">
+            <button class="active">Workspace</button><button>Notifications</button><button>Security</button><button>Data retention</button>
+          </div>
+          <div class="settings-content">
+            <div class="panel" style="margin:0 0 15px"><div class="panel-head"><h2>Workspace settings</h2></div><div class="panel-body">
+              <label style="display:block;color:var(--muted);font-size:11px;margin-bottom:6px">Business name</label>
+              <input class="search" value="ABC Retail" style="margin-bottom:14px">
+              <label style="display:block;color:var(--muted);font-size:11px;margin-bottom:6px">Workspace slug</label>
+              <input class="search" value="abc-retail" style="margin-bottom:14px">
+              <button class="send" onclick="notify('Workspace settings saved')">Save changes</button>
+            </div></div>
+            <div class="panel" style="margin:0"><div class="panel-head"><h2>Notifications</h2></div><div class="panel-body">
+              <div class="channel-card"><div class="grow"><strong>New messages</strong><small>Show in-app notification for new customer messages.</small></div><button class="toggle on"></button></div>
+              <div class="channel-card"><div class="grow"><strong>Delivery failures</strong><small>Notify workspace admins when outbound delivery fails.</small></div><button class="toggle on"></button></div>
+              <div class="channel-card"><div class="grow"><strong>Channel health</strong><small>Alert when a channel needs reauthorization.</small></div><button class="toggle on"></button></div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const conversations=[
+ {id:1,name:"John Doe",initials:"JD",channel:"WhatsApp",cls:"wa",preview:"How much is delivery?",time:"2 min",status:"open",unread:2,phone:"+977 9800000000",email:"john@example.com",
+  msgs:[
+   {type:"customer",name:"John",text:"Do you have this in stock?",time:"10:26 AM"},
+   {type:"staff",name:"Kusal",text:"Yes, it is available.",time:"10:28 AM",status:"Delivered"},
+   {type:"note",name:"Sita · Internal note",text:"Customer may also ask about delivery.",time:"10:32 AM"},
+   {type:"customer",name:"John",text:"How much is delivery?",time:"10:33 AM"}]},
+ {id:2,name:"Sarah Wilson",initials:"SW",channel:"Instagram",cls:"ig",preview:"Can I order this?",time:"5 min",status:"open",unread:1,phone:"+977 9811111111",email:"sarah@example.com",
+  msgs:[{type:"customer",name:"Sarah",text:"Can I order this through Instagram?",time:"10:30 AM"}]},
+ {id:3,name:"David Lee",initials:"DL",channel:"Messenger",cls:"fb",preview:"What is the price?",time:"10 min",status:"pending",unread:0,phone:"+977 9822222222",email:"david@example.com",
+  msgs:[{type:"customer",name:"David",text:"What is the price for the black one?",time:"10:20 AM"},{type:"staff",name:"Ram",text:"I will check the current price for you.",time:"10:22 AM",status:"Sent"}]},
+ {id:4,name:"Aarav Shah",initials:"AS",channel:"TikTok",cls:"tt",preview:"Is this available?",time:"18 min",status:"closed",unread:0,phone:"+977 9833333333",email:"aarav@example.com",
+  msgs:[{type:"customer",name:"Aarav",text:"Is this available in medium?",time:"10:12 AM"},{type:"staff",name:"Sita",text:"Yes, medium is available.",time:"10:15 AM",status:"Read"}]},
+ {id:5,name:"Maya Rai",initials:"MR",channel:"WhatsApp",cls:"wa",preview:"Opening hours?",time:"32 min",status:"open",unread:3,phone:"+977 9844444444",email:"maya@example.com",
+  msgs:[{type:"customer",name:"Maya",text:"What are your opening hours?",time:"9:58 AM"}]},
+ {id:6,name:"Nabin KC",initials:"NK",channel:"Instagram",cls:"ig",preview:"Do you deliver to Lalitpur?",time:"1 hr",status:"open",unread:0,phone:"+977 9855555555",email:"nabin@example.com",
+  msgs:[{type:"customer",name:"Nabin",text:"Do you deliver to Lalitpur?",time:"9:30 AM"},{type:"staff",name:"Kusal",text:"Yes, we deliver throughout Kathmandu Valley.",time:"9:34 AM",status:"Delivered"}]}
+];
+let selected=1, filter="all", noteMode=false;
+
+function renderList(){
+ const q=(document.getElementById("convSearch").value||"").toLowerCase();
+ const el=document.getElementById("conversationList");
+ el.innerHTML=conversations.filter(c=>{
+   const matchesFilter=filter==="all"||(filter==="unread"?c.unread>0:c.status===filter);
+   const matchesQ=!q||[c.name,c.phone,c.email,c.preview,c.channel].some(v=>v.toLowerCase().includes(q));
+   return matchesFilter&&matchesQ;
+ }).map(c=>`
+   <div class="conv ${c.id===selected?"selected":""}" onclick="selectConv(${c.id})">
+     <div class="conv-avatar ${c.cls}">${c.initials}</div>
+     <div class="conv-body">
+       <div class="conv-top"><span class="conv-name">${c.name}</span><span class="time">${c.time}</span></div>
+       <div class="preview">${c.preview}</div>
+       <div class="conv-meta"><span class="channel-dot">${channelIcon(c.channel)}</span><span class="status ${c.status}">${capitalize(c.status)}</span>${c.unread?`<span class="unread">${c.unread}</span>`:""}</div>
+     </div>
+   </div>`).join("");
+}
+function channelIcon(c){return c==="WhatsApp"?"●":c==="Instagram"?"◎":c==="Messenger"?"f":"♪"}
+function capitalize(s){return s[0].toUpperCase()+s.slice(1)}
+function selectConv(id){selected=id; noteMode=false; renderList(); renderChat();}
+function renderChat(){
+ const c=conversations.find(x=>x.id===selected);
+ document.getElementById("chatAvatar").className="conv-avatar "+c.cls;
+ document.getElementById("chatAvatar").textContent=c.initials;
+ document.getElementById("chatName").textContent=c.name;
+ document.getElementById("chatChannel").textContent=c.channel+" · "+c.phone;
+ document.getElementById("statusBtn").textContent=capitalize(c.status)+" ▾";
+ document.getElementById("profileAvatar").className="profile-big";
+ document.getElementById("profileAvatar").textContent=c.initials;
+ document.getElementById("profileName").textContent=c.name;
+ document.getElementById("profilePlatform").textContent=c.channel+" customer";
+ document.getElementById("profilePhone").textContent=c.phone;
+ document.getElementById("profileEmail").textContent=c.email;
+ document.getElementById("profileStatus").textContent=capitalize(c.status);
+ document.getElementById("profileUnread").textContent=c.unread+" messages";
+ const box=document.getElementById("messages");
+ box.innerHTML='<div class="day">Today · shared conversation</div>'+c.msgs.map(m=>{
+  if(m.type==="note") return `<div class="msg-row note"><div class="bubble"><b>📝 ${m.name}</b><div>${escapeHtml(m.text)}</div><div class="msg-meta">${m.time} · Private to staff</div></div></div>`;
+  return `<div class="msg-row ${m.type}"><div><div class="bubble">${escapeHtml(m.text)}</div><div class="msg-meta">${m.name} · ${m.time}${m.status?" · ✓ "+m.status:""}</div></div></div>`;
+ }).join("");
+ box.scrollTop=box.scrollHeight;
+}
+function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+function sendMessage(){
+ const input=document.getElementById("composer"), text=input.value.trim(); if(!text)return;
+ const c=conversations.find(x=>x.id===selected);
+ c.msgs.push({type:noteMode?"note":"staff",name:noteMode?"Kusal · Internal note":"Kusal",text,time:new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}),status:noteMode?null:"Pending"});
+ c.preview=noteMode?"Internal note: "+text:text;c.time="now";c.unread=0;
+ input.value=""; noteMode=false; input.classList.remove("note-mode"); input.placeholder="Type a message…"; document.getElementById("sendBtn").textContent="Send";
+ renderList();renderChat();notify(noteMode?"Internal note added":"Message sent to shared conversation");
+}
+function toggleNote(){
+ noteMode=!noteMode;const input=document.getElementById("composer");input.classList.toggle("note-mode",noteMode);
+ input.placeholder=noteMode?"Add a private internal note…":"Type a message…";document.getElementById("sendBtn").textContent=noteMode?"Add note":"Send";
+}
+function insertCanned(){document.getElementById("composer").value="Our store is located at New Road. We are open Sunday–Friday, 10 AM–6 PM.";document.getElementById("composer").focus();notify("Canned response inserted")}
+function cycleStatus(){
+ const c=conversations.find(x=>x.id===selected); const order=["open","pending","closed"]; c.status=order[(order.indexOf(c.status)+1)%3]; renderList();renderChat();notify("Conversation status changed to "+capitalize(c.status));
+}
+function notify(text){const t=document.getElementById("toast");t.textContent=text;t.classList.add("show");clearTimeout(window.__toast);window.__toast=setTimeout(()=>t.classList.remove("show"),1800)}
+document.querySelectorAll(".nav button").forEach(btn=>btn.addEventListener("click",()=>{
+ document.querySelectorAll(".nav button").forEach(x=>x.classList.remove("active"));btn.classList.add("active");
+ document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));document.getElementById(btn.dataset.view).classList.add("active");
+ document.getElementById("pageTitle").textContent=btn.querySelector("span:nth-child(2)")?.textContent||"Shared Inbox";
+}));
+document.querySelectorAll(".filter").forEach(btn=>btn.addEventListener("click",()=>{
+ document.querySelectorAll(".filter").forEach(x=>x.classList.remove("active"));btn.classList.add("active");filter=btn.dataset.filter;renderList();
+}));
+document.getElementById("convSearch").addEventListener("input",renderList);
+document.getElementById("globalSearch").addEventListener("input",e=>{if(e.target.value){document.getElementById("convSearch").value=e.target.value;document.querySelector('[data-view="inbox"]').click();renderList()}});
+document.querySelectorAll(".toggle").forEach(t=>t.addEventListener("click",()=>t.classList.toggle("on")));
+renderList();renderChat();
+</script>
+</body>
+</html>
