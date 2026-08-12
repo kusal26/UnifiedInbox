@@ -41,16 +41,17 @@ export async function request<T>(
   url: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const headers: Record<string, string> = options.headers instanceof Headers
-    ? Object.fromEntries(options.headers.entries())
-    : Array.isArray(options.headers)
-      ? Object.fromEntries(options.headers)
-      : { ...options.headers };
-  const init: RequestInit = { ...options, headers };
+  const { body, headers: optionHeaders, ...requestOptions } = options;
+  const headers: Record<string, string> = optionHeaders instanceof Headers
+    ? Object.fromEntries(optionHeaders.entries())
+    : Array.isArray(optionHeaders)
+      ? Object.fromEntries(optionHeaders)
+      : { ...optionHeaders };
+  const init: RequestInit = { ...requestOptions, headers };
 
-  if (options.body !== undefined) {
+  if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
-    init.body = JSON.stringify(options.body);
+    init.body = JSON.stringify(body);
   }
 
   const response = await fetcher(url, init);

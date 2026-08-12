@@ -1,20 +1,16 @@
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { LoginPage } from '../auth/LoginPage';
 import { useAuth } from '../auth/AuthProvider';
 import { AppShell } from './AppShell';
-import { appRoutes } from './routes';
-
-function RoutePlaceholder({ label }: { label: string }) {
-  return <section className="route-placeholder"><p className="eyebrow">Workspace</p><h1>{label}</h1></section>;
-}
+import { createInboxApi } from '../api/inbox';
+import { InboxPage } from '../inbox/InboxPage';
+import { AuditPage, CannedPage, ChannelsPage, OverviewPage, SettingsPage, TeamPage } from '../workspace/WorkspacePages';
 
 export function App() {
   return <BrowserRouter>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route element={<ProtectedApp />}>
-        {appRoutes.map((route) => <Route key={route.path} path={route.path} element={<RoutePlaceholder label={route.label} />} />)}
-      </Route>
+      <Route path="/*" element={<ProtectedApp />} />
     </Routes>
   </BrowserRouter>;
 }
@@ -22,5 +18,11 @@ export function App() {
 function ProtectedApp() {
   const { token, logout } = useAuth();
   if (!token) return <Navigate to="/login" replace />;
-  return <AppShell onLogout={logout}><Outlet /></AppShell>;
+  const api = createInboxApi(() => token);
+  return <AppShell onLogout={logout}><Routes>
+    <Route path="/" element={<InboxPage api={api} />} />
+    <Route path="/overview" element={<OverviewPage />} /><Route path="/channels" element={<ChannelsPage />} />
+    <Route path="/team" element={<TeamPage />} /><Route path="/canned" element={<CannedPage />} />
+    <Route path="/audit" element={<AuditPage />} /><Route path="/settings" element={<SettingsPage />} />
+  </Routes></AppShell>;
 }

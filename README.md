@@ -16,4 +16,17 @@ Demo login: workspace `acme`, `agent@acme.test`, any non-empty password.
 powershell -ExecutionPolicy Bypass -File scripts/verify-mvp.ps1
 ```
 
+## Frontend development
+
+Run the client from `src/frontend` with Bun:
+
+```powershell
+bun install
+bun dev
+```
+
+The Vite development server proxies `/api` and `/hubs` to the local API at `http://127.0.0.1:5080`. Run the frontend checks with `bunx vitest run`, `bunx tsc --noEmit`, and `bun run build`.
+
+Workspace administration screens use clearly labelled demo-local data until their matching API endpoints are available.
+
 The current MVP includes tenant-scoped login, conversation search/filtering, unified message/note activity, unread-safe cursors, inbound deduplication, outbound idempotency, webhook persistence boundary, SignalR tenant groups, and a responsive inbox UI.
