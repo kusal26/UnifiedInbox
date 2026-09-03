@@ -4,8 +4,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:5080',
-      '/hubs': 'http://127.0.0.1:5080'
+      '/api': 'http://127.0.0.1:5020',
+      '/hubs': 'http://127.0.0.1:5020'
     }
   },
   test: {

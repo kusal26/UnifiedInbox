@@ -1,5 +1,8 @@
 .worktrees/
+.vs/
+.superpower*
 **/bin/
 **/obj/
 **/node_modules/
 **/dist/
+.serena*
