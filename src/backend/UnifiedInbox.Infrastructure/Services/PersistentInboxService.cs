@@ -39,14 +39,16 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
 
     public async Task<ActivityItem?> AddNoteAsync(Guid id, string body, CancellationToken cancellationToken)
     {
+        await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, cancellationToken);
         var conversation = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (conversation is null || current.UserId is not { } userId) return null;
         var sequence = await NextSequence(id, cancellationToken); var note = new InternalNote { TenantId = conversation.TenantId, ConversationId = id, AuthorId = userId, Body = RequireBody(body), Sequence = sequence };
-        db.InternalNotes.Add(note); Touch(conversation); AddOutbox(conversation.TenantId, "note.created", note.Id); await db.SaveChangesAsync(cancellationToken);
+        db.InternalNotes.Add(note); Touch(conversation); AddOutbox(conversation.TenantId, "note.created", note.Id); AddOutbox(conversation.TenantId, "conversation.updated", conversation.Id); await db.SaveChangesAsync(cancellationToken);
         return new(ActivityKind.InternalNote, note.Id, id, note.Body, note.CreatedAt, sequence, userId, null);
     }
 
     public async Task<ActivityItem?> SendAsync(Guid id, string body, string idempotencyKey, string? templateName, IReadOnlyList<Guid>? attachmentIds, CancellationToken cancellationToken)
     {
+        await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, cancellationToken);
         var conversation = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (conversation is null || current.UserId is not { } userId) return null;
         var existing = await db.Messages.SingleOrDefaultAsync(x => x.ConversationId == id && x.IdempotencyKey == idempotencyKey, cancellationToken);
         if (existing is not null) return ToActivity(existing);
@@ -55,7 +57,7 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
         var decision = policy.Evaluate(conversation.LastCustomerMessageAt, DateTimeOffset.UtcNow, hasApprovedTemplate: !string.IsNullOrWhiteSpace(templateName));
         if (decision == WhatsAppSendDecision.TemplateRequired)
             throw new InboxException("messaging_window_closed", "The 24-hour customer service window is closed. Send an approved template message.", 422);
-        var sequence = await NextSequence(id, cancellationToken); var message = new Message { TenantId = conversation.TenantId, ChannelId = conversation.ChannelId, ConversationId = id, Direction = MessageDirection.Outbound, SenderUserId = userId, Body = RequireBody(body), IdempotencyKey = idempotencyKey, Status = MessageStatus.Pending, Sequence = sequence };
+        var sequence = await NextSequence(id, cancellationToken); var message = new Message { TenantId = conversation.TenantId, ChannelId = conversation.ChannelId, ConversationId = id, Direction = MessageDirection.Outbound, SenderUserId = userId, Body = RequireBody(body), IdempotencyKey = idempotencyKey, Status = MessageStatus.Pending, Sequence = sequence, NextAttemptAt = DateTimeOffset.UtcNow.AddMinutes(2) };
         db.Messages.Add(message);
         if (attachmentIds is { Count: > 0 })
         {
@@ -70,10 +72,10 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
                 attachment.Status = AttachmentStatus.Claimed;
             }
         }
-        Touch(conversation); AddOutbox(conversation.TenantId, "outbound.message.requested", message.Id); await db.SaveChangesAsync(cancellationToken); return ToActivity(message);
+        Touch(conversation); AddOutbox(conversation.TenantId, "outbound.message.requested", message.Id); AddOutbox(conversation.TenantId, "message.created", message.Id); AddOutbox(conversation.TenantId, "conversation.updated", conversation.Id); await db.SaveChangesAsync(cancellationToken); return ToActivity(message);
     }
 
-    public async Task<ConversationSummary?> SetStatusAsync(Guid id, ConversationStatus status, CancellationToken cancellationToken) { var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null; c.Status = status; Touch(c); AddOutbox(c.TenantId, "conversation.updated", c.Id); await AuditAndSave(c.TenantId, "conversation.status.changed", c.Id, cancellationToken); return await SummaryQuery().SingleAsync(x => x.Id == id, cancellationToken); }
+    public async Task<ConversationSummary?> SetStatusAsync(Guid id, ConversationStatus status, CancellationToken cancellationToken) { await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, cancellationToken); var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null; c.Status = status; Touch(c); AddOutbox(c.TenantId, "conversation.updated", c.Id); await AuditAndSave(c.TenantId, "conversation.status.changed", c.Id, cancellationToken); return await SummaryQuery().SingleAsync(x => x.Id == id, cancellationToken); }
     public async Task<ConversationSummary?> MarkReadAsync(Guid id, long throughSequence, CancellationToken cancellationToken) { var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null; c.LastReadSequence = Math.Max(c.LastReadSequence, throughSequence); await db.SaveChangesAsync(cancellationToken); return await SummaryQuery().SingleAsync(x => x.Id == id, cancellationToken); }
     public async Task<bool> UpdateCustomerNotesAsync(Guid id, string? notes, CancellationToken cancellationToken) { var contact = await db.Conversations.Where(x => x.Id == id).Join(db.Contacts, x => x.ContactId, x => x.Id, (_, contact) => contact).SingleOrDefaultAsync(cancellationToken); if (contact is null) return false; contact.Notes = notes?.Trim(); await AuditAndSave(contact.TenantId, "contact.notes.updated", contact.Id, cancellationToken); return true; }
 

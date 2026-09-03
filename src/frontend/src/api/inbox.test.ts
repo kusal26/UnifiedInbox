@@ -31,13 +31,17 @@ describe('createInboxApi', () => {
   });
 
   it('converts numeric conversation statuses at the API boundary', async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify([
-      { id: 'c1', contactName: 'Jamie', platform: 'whatsapp', preview: 'Hi', status: 1, unread: true, updatedAt: '2026-01-01T00:00:00Z' },
-    ])));
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      items: [
+        { id: 'c1', contactName: 'Jamie', platform: 'whatsapp', preview: 'Hi', status: 1, unread: true, updatedAt: '2026-01-01T00:00:00Z' },
+      ],
+      nextCursor: 'cursor-1',
+    })));
 
-    await expect(createInboxApi(() => 'token-1', fetcher).listConversations()).resolves.toMatchObject([
-      { id: 'c1', status: 'Pending' },
-    ]);
+    await expect(createInboxApi(() => 'token-1', fetcher).listConversations()).resolves.toEqual({
+      items: [expect.objectContaining({ id: 'c1', status: 'Pending' })],
+      nextCursor: 'cursor-1',
+    });
   });
 
   it('converts numeric activity enums and maps senderUserId to authorId', async () => {

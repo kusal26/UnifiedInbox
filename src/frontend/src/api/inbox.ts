@@ -39,13 +39,31 @@ export interface ActivityItem {
 
 export interface ActivityPage { items: ActivityItem[]; nextCursor: string | null }
 
+export interface ConversationPage { items: Conversation[]; nextCursor: string | null }
+
+export interface ConversationDetails {
+  id: string;
+  status: ConversationStatus;
+  channelId: string;
+  platform: string;
+  contactId: string;
+  contactName: string;
+  phone: string;
+  email?: string | null;
+  customerNotes?: string | null;
+  lastReadSequence: number;
+  updatedAt: string;
+}
+
 export interface InboxApi {
   login(credentials: LoginCredentials): Promise<LoginResponse>;
-  listConversations(filters?: { search?: string; status?: ConversationStatus }): Promise<Conversation[]>;
+  listConversations(filters?: { search?: string; status?: ConversationStatus; unreadOnly?: boolean; cursor?: string; pageSize?: number }): Promise<ConversationPage>;
+  getConversation(conversationId: string): Promise<ConversationDetails>;
   getActivity(conversationId: string, options?: { before?: string; limit?: number }): Promise<ActivityPage>;
   addNote(conversationId: string, body: string): Promise<ActivityItem>;
   setStatus(conversationId: string, status: ConversationStatus): Promise<Conversation>;
   markRead(conversationId: string, throughSequence: number): Promise<Conversation>;
+  updateCustomerNotes(conversationId: string, notes: string | null): Promise<void>;
   sendMessage(conversationId: string, body: string, idempotencyKey: string, options?: { templateName?: string; attachmentIds?: string[] }): Promise<ActivityItem>;
 }
 
@@ -92,12 +110,18 @@ export function createInboxApi(getToken: () => string | null, fetcher: Fetcher =
       const params = new URLSearchParams();
       if (filters.search) params.set('search', filters.search);
       if (filters.status) params.set('status', filters.status);
+      if (filters.unreadOnly) params.set('unreadOnly', 'true');
+      if (filters.cursor) params.set('cursor', filters.cursor);
+      if (filters.pageSize) params.set('pageSize', String(filters.pageSize));
       const query = params.size ? `?${params}` : '';
-      // Compatibility parser: the API now returns { items, nextCursor }; older
-      // builds returned a bare array. Accept both during rollout.
-      return request<ApiConversation[] | { items: ApiConversation[] }>(fetcher, endpoint(`/conversations${query}`), { headers: authorized() })
-        .then((page) => (Array.isArray(page) ? page : page.items).map(normalizeConversation));
+      // The API returns { items, nextCursor }; older builds returned a bare array. Accept both.
+      return request<ApiConversation[] | { items: ApiConversation[]; nextCursor?: string | null }>(fetcher, endpoint(`/conversations${query}`), { headers: authorized() })
+        .then((page) => Array.isArray(page)
+          ? { items: page.map(normalizeConversation), nextCursor: null }
+          : { items: page.items.map(normalizeConversation), nextCursor: page.nextCursor ?? null });
     },
+    getConversation: (conversationId) => request<ConversationDetails & { status: number | ConversationStatus }>(fetcher, endpoint(`/conversations/${conversationId}`), { headers: authorized() })
+      .then((details) => ({ ...details, status: fromEnum(details.status, conversationStatuses) })),
     getActivity: (conversationId, options = {}) => {
       const params = new URLSearchParams();
       if (options.before) params.set('before', options.before);
@@ -109,6 +133,7 @@ export function createInboxApi(getToken: () => string | null, fetcher: Fetcher =
     addNote: (conversationId, body) => request<ApiActivityItem>(fetcher, endpoint(`/conversations/${conversationId}/notes`), { method: 'POST', headers: authorized(), body: { body } }).then(normalizeActivityItem),
     setStatus: (conversationId, status) => request<ApiConversation>(fetcher, endpoint(`/conversations/${conversationId}/status`), { method: 'PATCH', headers: authorized(), body: { status: toConversationStatus(status) } }).then(normalizeConversation),
     markRead: (conversationId, throughSequence) => request<ApiConversation>(fetcher, endpoint(`/conversations/${conversationId}/read`), { method: 'PUT', headers: authorized(), body: { throughSequence } }).then(normalizeConversation),
+    updateCustomerNotes: (conversationId, notes) => request<void>(fetcher, endpoint(`/conversations/${conversationId}/customer-notes`), { method: 'PUT', headers: authorized(), body: { notes } }),
     sendMessage: (conversationId, body, idempotencyKey, options = {}) => request<ApiActivityItem>(fetcher, endpoint(`/conversations/${conversationId}/messages`), { method: 'POST', headers: authorized({ 'Idempotency-Key': idempotencyKey }), body: { body, templateName: options.templateName, attachmentIds: options.attachmentIds } }).then(normalizeActivityItem),
   };
 }

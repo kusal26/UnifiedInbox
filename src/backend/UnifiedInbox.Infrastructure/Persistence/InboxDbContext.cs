@@ -20,9 +20,11 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<CannedResponseEntity> CannedResponses => Set<CannedResponseEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
+    public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
     public DbSet<AuditEntryEntity> AuditEntries => Set<AuditEntryEntity>();
     public DbSet<VerificationToken> VerificationTokens => Set<VerificationToken>();
     public DbSet<ChannelHealth> ChannelHealth => Set<ChannelHealth>();
+    public DbSet<ConnectionAttempt> ConnectionAttempts => Set<ConnectionAttempt>();
     public DbSet<global::UnifiedInbox.Domain.WebhookReceipt> WebhookReceipts => Set<global::UnifiedInbox.Domain.WebhookReceipt>();
     public DbSet<OutboxEvent> Outbox => Set<OutboxEvent>();
     /// <summary>Unscoped: webhook routing only. Never expose via tenant queries.</summary>
@@ -36,8 +38,10 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         ConfigureTenant<Contact>(modelBuilder); ConfigureTenant<Conversation>(modelBuilder); ConfigureTenant<Message>(modelBuilder);
         ConfigureTenant<InternalNote>(modelBuilder); ConfigureTenant<RefreshToken>(modelBuilder); ConfigureTenant<Invitation>(modelBuilder);
         ConfigureTenant<Attachment>(modelBuilder); ConfigureTenant<CannedResponseEntity>(modelBuilder); ConfigureTenant<NotificationEntity>(modelBuilder);
+        ConfigureTenant<NotificationPreference>(modelBuilder);
         ConfigureTenant<AuditEntryEntity>(modelBuilder); ConfigureTenant<global::UnifiedInbox.Domain.WebhookReceipt>(modelBuilder); ConfigureTenant<OutboxEvent>(modelBuilder);
         ConfigureTenant<VerificationToken>(modelBuilder); ConfigureTenant<ChannelHealth>(modelBuilder);
+        ConfigureTenant<ConnectionAttempt>(modelBuilder);
         // ProviderRoute is deliberately unscoped: webhooks must resolve tenant from
         // provider asset id before any tenant context exists.
         modelBuilder.Entity<ProviderRoute>().HasKey(x => x.Id);
@@ -55,13 +59,17 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         modelBuilder.Entity<Message>().HasIndex(x => new { x.TenantId, x.ConversationId, x.Sequence }).IsUnique();
         modelBuilder.Entity<Message>().HasIndex(x => new { x.TenantId, x.ChannelId, x.ExternalMessageId }).IsUnique().HasFilter("\"ExternalMessageId\" IS NOT NULL");
         modelBuilder.Entity<Message>().HasIndex(x => new { x.TenantId, x.ConversationId, x.IdempotencyKey }).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL");
+        modelBuilder.Entity<Message>().Property(x => x.Version).IsRowVersion();
+        modelBuilder.Entity<global::UnifiedInbox.Domain.WebhookReceipt>().Property(x => x.Version).IsRowVersion();
         modelBuilder.Entity<InternalNote>().HasIndex(x => new { x.TenantId, x.ConversationId, x.Sequence }).IsUnique();
         modelBuilder.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<Invitation>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<CannedResponseEntity>().HasIndex(x => new { x.TenantId, x.Shortcut }).IsUnique();
+        modelBuilder.Entity<NotificationPreference>().HasIndex(x => new { x.TenantId, x.UserId, x.Kind }).IsUnique();
         modelBuilder.Entity<VerificationToken>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<RefreshToken>().HasIndex(x => x.FamilyId);
         modelBuilder.Entity<global::UnifiedInbox.Domain.WebhookReceipt>().HasIndex(x => new { x.ChannelId, x.ProviderEventId }).IsUnique();
+        modelBuilder.Entity<ConnectionAttempt>().HasIndex(x => x.StateHash).IsUnique();
         modelBuilder.Entity<OutboxEvent>().HasIndex(x => new { x.Status, x.AvailableAt });
     }
 

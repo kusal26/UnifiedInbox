@@ -51,6 +51,8 @@ public sealed class Channel : ITenantScoped
     public string Status { get; set; } = "connected";
     public DateTimeOffset? LastWebhookAt { get; set; }
     public DateTimeOffset? LastOutboundAt { get; set; }
+    /// <summary>Owning WhatsApp Business Account id, used for webhook (un)subscription.</summary>
+    public string? ExternalBusinessId { get; set; }
 }
 
 public sealed class ChannelCredential : ITenantScoped
@@ -87,6 +89,7 @@ public sealed class Conversation : ITenantScoped
     public required Guid ContactId { get; set; }
     public string ExternalConversationId { get; set; } = "";
     public ConversationStatus Status { get; set; } = ConversationStatus.Open;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? LastCustomerMessageAt { get; set; }
     public long LastReadSequence { get; set; }
@@ -110,6 +113,11 @@ public sealed class Message : ITenantScoped
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? ProviderTimestamp { get; set; }
     public long Sequence { get; set; }
+    /// <summary>Provider-send attempts. Retry timing lives in <see cref="NextAttemptAt"/>; ambiguous outcomes stop retrying.</summary>
+    public int Attempts { get; set; }
+    public DateTimeOffset? NextAttemptAt { get; set; }
+    /// <summary>Optimistic claim token so concurrent workers never send twice.</summary>
+    public uint Version { get; set; }
 }
 
 public sealed class InternalNote : ITenantScoped
@@ -154,6 +162,25 @@ public sealed class Invitation : ITenantScoped
     public Guid? InvitedById { get; set; }
 }
 
+public enum ConnectionAttemptPurpose { Connect, Reauthorize }
+
+/// <summary>
+/// Single-use Embedded Signup handshake. Only the hash is stored; the raw state lives
+/// ~10 minutes in the browser flow and is bound to the initiating user.
+/// </summary>
+public sealed class ConnectionAttempt : ITenantScoped
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid? ChannelId { get; set; }
+    public Guid InitiatingUserId { get; set; }
+    public string StateHash { get; set; } = "";
+    public ConnectionAttemptPurpose Purpose { get; set; } = ConnectionAttemptPurpose.Connect;
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? ConsumedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 /// <summary>
 /// Unscoped routing table. Webhooks resolve tenant/channel from the provider asset id
 /// (WhatsApp phone_number_id) BEFORE entering a tenant context. Contains no secrets.
@@ -196,6 +223,12 @@ public sealed class NotificationEntity : ITenantScoped
     public string Text { get; set; } = ""; public bool IsRead { get; set; } public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public sealed class NotificationPreference : ITenantScoped
+{
+    public Guid Id { get; set; } = Guid.NewGuid(); public Guid TenantId { get; set; } public Guid UserId { get; set; }
+    public string Kind { get; set; } = ""; public bool Enabled { get; set; } = true;
+}
+
 public sealed class AuditEntryEntity : ITenantScoped
 {
     public Guid Id { get; set; } = Guid.NewGuid(); public Guid TenantId { get; set; } public Guid? ActorId { get; set; }
@@ -208,6 +241,12 @@ public sealed class WebhookReceipt : ITenantScoped
     public Guid Id { get; set; } = Guid.NewGuid(); public Guid TenantId { get; set; } public Guid ChannelId { get; set; }
     public string ProviderEventId { get; set; } = ""; public byte[] RawBody { get; set; } = []; public WebhookStatus Status { get; set; } = WebhookStatus.Received;
     public DateTimeOffset ReceivedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Normalization attempts. <see cref="AvailableAt"/> gates the retry sweeper.</summary>
+    public int Attempts { get; set; }
+    public DateTimeOffset AvailableAt { get; set; } = DateTimeOffset.UtcNow;
+    public string? LastError { get; set; }
+    /// <summary>Optimistic claim token so concurrent workers never normalize twice.</summary>
+    public uint Version { get; set; }
 }
 
 public sealed class OutboxEvent : ITenantScoped

@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  DOTNET_NOLOGO: true
+  RUN_DOCKER_TESTS: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet restore UnifiedInbox.slnx
+      - run: dotnet build UnifiedInbox.slnx --no-restore --warnaserror
+      - run: dotnet test UnifiedInbox.slnx --no-build
+      - name: migration drift check
+        run: |
+          dotnet tool install --global dotnet-ef
+          dotnet ef migrations has-pending-model-changes --project src/backend/UnifiedInbox.Infrastructure --startup-project src/backend/UnifiedInbox.Api --no-build
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: src/frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run test --run
+      - run: bunx tsc --noEmit
+      - run: bun run build
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f src/backend/UnifiedInbox.Api/Dockerfile -t unified-inbox-api:ci .
+      - run: docker build -f src/backend/UnifiedInbox.Worker/Dockerfile -t unified-inbox-worker:ci .
+      - run: docker build -f src/frontend/Dockerfile -t unified-inbox-frontend:ci .
+
+  compose-empty-db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose up -d --build migrator postgres rabbitmq redis minio
+      - run: docker compose run --rm migrator
+        env: { COMPOSE_MENU: 'false' }
+      - run: |
+          for attempt in $(seq 1 30); do
+            docker compose exec -T postgres pg_isready -U unified_inbox && break
+            sleep 2
+          done
+          docker compose exec -T postgres psql -U unified_inbox -d unified_inbox -c "SELECT count(*) FROM \"Users\";"
+      - run: docker compose down -v
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, containers]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: cp .env.example .env
+      - run: docker compose up -d --build
+      - run: docker compose exec -T api sh -c "wget -qO- http://localhost:8080/api/v1/operations/ready || exit 1"
+      - uses: microsoft/playwright-github-action@v1
+      - run: bun install --cwd tests/e2e
+      - run: bunx --cwd tests/e2e playwright test
+        env: { BASE_URL: 'http://localhost:8080', API_URL: 'http://localhost:8080' }
+      - run: docker compose down -v
+        if: always()

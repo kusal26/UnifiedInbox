@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthProvider';
 
 export function LoginPage() {
@@ -49,6 +49,8 @@ export function LoginPage() {
         <input name="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
       </label>
       <button type="submit" disabled={isPending}>{isPending ? 'Opening inbox…' : 'Open inbox'}</button>
+      <p>New here? <Link to="/register">Create a workspace</Link></p>
+      <p><Link to="/forgot-password">Forgot your password?</Link></p>
     </form>
   </main>;
 }

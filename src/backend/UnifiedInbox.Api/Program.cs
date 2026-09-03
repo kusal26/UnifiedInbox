@@ -14,6 +14,7 @@ using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Channels.WhatsApp;
 using UnifiedInbox.Infrastructure.Persistence;
 using UnifiedInbox.Infrastructure.Services;
+using UnifiedInbox.Infrastructure.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Database") ?? builder.Configuration.GetConnectionString("Postgres") ?? Environment.GetEnvironmentVariable("POSTGRES_CONNECTION") ?? "Host=localhost;Port=5432;Database=unified_inbox;Username=unified_inbox;Password=local_only_password";
@@ -32,8 +33,13 @@ builder.Services.AddScoped<ITokenIssuer, JwtTokenIssuer>();
 builder.Services.AddScoped<IAuthService, AuthenticationService>();
 builder.Services.AddScoped<IInboxService, PersistentInboxService>();
 builder.Services.AddScoped<IAdministrationService, AdministrationService>();
+builder.Services.AddScoped<IInvitationService, InvitationService>();
+builder.Services.AddScoped<IChannelService, ChannelService>();
+builder.Services.AddHttpClient<IWhatsAppGraphClient, WhatsAppGraphClient>();
 builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IAttachmentService, AttachmentService>();
+builder.Services.AddSingleton<IObjectStorage, MinioObjectStorage>();
+builder.Services.AddSingleton<IAttachmentScanner, ClamAvScanner>();
 builder.Services.AddSingleton<IMailSender, SmtpMailSender>();
 builder.Services.AddSingleton<WhatsAppSignatureValidator>();
 

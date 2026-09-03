@@ -58,13 +58,35 @@ public interface IInboxService
 public interface IAdministrationService
 {
     Task<IReadOnlyList<User>> UsersAsync(CancellationToken cancellationToken);
+    Task<User> SetUserRoleAsync(Guid userId, UserRole role, CancellationToken cancellationToken);
+    Task<User> SetUserActiveAsync(Guid userId, bool isActive, CancellationToken cancellationToken);
     Task<IReadOnlyList<Channel>> ChannelsAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<CannedResponseEntity>> CannedResponsesAsync(string? search, CancellationToken cancellationToken);
     Task<CannedResponseEntity> AddCannedResponseAsync(string title, string shortcut, string content, CancellationToken cancellationToken);
-    Task<IReadOnlyList<NotificationEntity>> NotificationsAsync(CancellationToken cancellationToken);
+    Task<CannedResponseEntity> UpdateCannedResponseAsync(Guid id, string title, string shortcut, string content, CancellationToken cancellationToken);
+    Task<bool> DeleteCannedResponseAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<NotificationEntity>> NotificationsAsync(bool unreadOnly, CancellationToken cancellationToken);
+    Task<bool> MarkNotificationReadAsync(Guid id, CancellationToken cancellationToken);
+    Task MarkAllNotificationsReadAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<NotificationPreference>> NotificationPreferencesAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<NotificationPreference>> SetNotificationPreferenceAsync(string kind, bool enabled, CancellationToken cancellationToken);
     Task<IReadOnlyList<AuditEntryEntity>> AuditAsync(string? search, CancellationToken cancellationToken);
+    Task<string> AuditCsvAsync(string? search, CancellationToken cancellationToken);
+    Task<OverviewMetrics> OverviewMetricsAsync(int days, CancellationToken cancellationToken);
     Task<Tenant?> WorkspaceAsync(CancellationToken cancellationToken);
     Task<Tenant?> UpdateWorkspaceAsync(string name, int retentionDays, CancellationToken cancellationToken);
+}
+
+public sealed record OverviewMetrics(int Days, DateTimeOffset Since, long ConversationsOpened, long OpenConversations, long MessagesInbound, long MessagesOutbound, long NotesCreated);
+
+public sealed record InvitationSummary(Guid Id, string Email, UserRole Role, DateTimeOffset ExpiresAt, DateTimeOffset CreatedAt);
+
+public interface IInvitationService
+{
+    Task<IReadOnlyList<InvitationSummary>> ListAsync(CancellationToken cancellationToken);
+    Task<InvitationSummary> InviteAsync(string email, UserRole role, CancellationToken cancellationToken);
+    Task<bool> AcceptAsync(string token, string displayName, string password, CancellationToken cancellationToken);
+    Task<bool> RevokeAsync(Guid id, CancellationToken cancellationToken);
 }
 
 public interface IWebhookService
@@ -74,9 +96,11 @@ public interface IWebhookService
 }
 
 public sealed record StagedAttachmentResponse(Guid Id, string FileName, string ContentType, long Size, DateTimeOffset ExpiresAt, string ObjectKey, string UploadUrl);
+public sealed record AttachmentDownload(string DownloadUrl, string ContentType, string FileName, DateTimeOffset ExpiresAt);
 public interface IAttachmentService
 {
     Task<StagedAttachmentResponse> StageAsync(string fileName, string contentType, long size, CancellationToken cancellationToken);
     Task<bool> CompleteAsync(Guid id, CancellationToken cancellationToken);
-    Task<(byte[] Content, string ContentType, string FileName)?> DownloadAsync(Guid id, CancellationToken cancellationToken);
+    Task<AttachmentDownload?> DownloadAsync(Guid id, CancellationToken cancellationToken);
+    Task<int> CleanupExpiredAsync(CancellationToken cancellationToken);
 }

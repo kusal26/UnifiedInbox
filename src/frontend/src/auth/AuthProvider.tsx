@@ -12,10 +12,11 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 interface AuthProviderProps extends PropsWithChildren {
   login?: (credentials: LoginCredentials) => Promise<LoginResponse>;
+  initialToken?: string | null;
 }
 
-export function AuthProvider({ children, login: loginRequest }: AuthProviderProps) {
-  const [token, setToken] = useState<string | null>(null);
+export function AuthProvider({ children, login: loginRequest, initialToken = null }: AuthProviderProps) {
+  const [token, setToken] = useState<string | null>(initialToken);
   useEffect(() => {
     if (loginRequest) return;
     const controller = new AbortController();

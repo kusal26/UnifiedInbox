@@ -1,6 +1,8 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using RabbitMQ.Client;
+using UnifiedInbox.Application;
 using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Persistence;
 
@@ -11,11 +13,12 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, ConnectionFact
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await using var connection = await factory.CreateConnectionAsync(stoppingToken);
-        await using var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
+        await using var channel = await connection.CreateChannelAsync(new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true), stoppingToken);
         await channel.ExchangeDeclareAsync("unified-inbox.events", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: stoppingToken);
         while (!stoppingToken.IsCancellationRequested)
         {
-            await DispatchBatch(channel, stoppingToken);
+            try { await DispatchBatch(channel, stoppingToken); }
+            catch (Exception exception) when (!stoppingToken.IsCancellationRequested) { logger.LogWarning(exception, "Outbox dispatch batch failed"); }
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
         }
     }
@@ -31,13 +34,25 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, ConnectionFact
                 job.Status = OutboxStatus.Processing; job.Attempts++; await db.SaveChangesAsync(token);
                 var properties = new BasicProperties { Persistent = true, MessageId = job.Id.ToString(), Type = job.Type, Headers = new Dictionary<string, object?> { ["tenant-id"] = job.TenantId.ToString() } };
                 await channel.BasicPublishAsync("unified-inbox.events", job.Type, mandatory: true, properties, Encoding.UTF8.GetBytes(job.Payload), token);
+                // Publisher confirms are enabled on this channel: the publish above only
+                // completes once the broker accepted the message.
                 job.Status = OutboxStatus.Processed; job.ProcessedAt = DateTimeOffset.UtcNow; job.LastError = null;
             }
             catch (Exception exception)
             {
                 logger.LogWarning(exception, "Outbox dispatch {OutboxId} failed on attempt {Attempt}", job.Id, job.Attempts);
-                job.LastError = exception.GetType().Name; job.Status = job.Attempts >= 8 ? OutboxStatus.DeadLettered : OutboxStatus.Pending;
-                job.AvailableAt = DateTimeOffset.UtcNow.AddSeconds(Math.Min(300, Math.Pow(2, job.Attempts)) + Random.Shared.NextDouble());
+                job.LastError = exception.GetType().Name;
+                if (job.Attempts >= OutboxRetryPolicy.MaxAttempts || !OutboxRetryPolicy.IsTransient(exception))
+                {
+                    job.Status = OutboxStatus.DeadLettered;
+                    db.Notifications.Add(new NotificationEntity { TenantId = job.TenantId, Type = "sync.failed", Text = $"An update ({job.Type}) could not be delivered after {job.Attempts} attempts." });
+                    db.Outbox.Add(new OutboxEvent(Guid.NewGuid(), job.TenantId, "notification.created", JsonSerializer.Serialize(new { id = job.Id }), DateTimeOffset.UtcNow));
+                }
+                else
+                {
+                    job.Status = OutboxStatus.Pending;
+                    job.AvailableAt = DateTimeOffset.UtcNow.Add(OutboxRetryPolicy.NextDelay(job.Attempts));
+                }
             }
             await db.SaveChangesAsync(token);
         }

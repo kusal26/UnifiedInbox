@@ -1,0 +1,39 @@
+using Shouldly;
+using UnifiedInbox.Application;
+
+namespace UnifiedInbox.Application.Tests;
+
+public sealed class AttachmentSnifferTests
+{
+    public static TheoryData<string, byte[]> GenuineCases => new()
+    {
+        { "image/jpeg", [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46] },
+        { "image/png", [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] },
+        { "image/gif", [0x47, 0x49, 0x46, 0x38, 0x39, 0x61] },
+        { "image/webp", [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50] },
+        { "application/pdf", [0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34] },
+        { "video/mp4", [0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D] },
+    };
+
+    public static TheoryData<string, byte[]> SpoofedCases => new()
+    {
+        { "image/jpeg", [0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34] }, // PDF masquerading as JPEG
+        { "image/png", [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46] }, // JPEG masquerading as PNG
+        { "application/pdf", [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] }, // PNG masquerading as PDF
+        { "video/mp4", [0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34] }, // PDF masquerading as MP4
+        { "image/gif", [0x00, 0x01, 0x02, 0x03, 0x04, 0x05] },
+        { "image/webp", [] },
+    };
+
+    [Theory, MemberData(nameof(GenuineCases))]
+    public void All_six_allowed_types_pass_with_genuine_magic_bytes(string contentType, byte[] head) =>
+        AttachmentSniffer.Matches(contentType, head).ShouldBeTrue();
+
+    [Theory, MemberData(nameof(SpoofedCases))]
+    public void Spoofed_or_empty_bytes_are_rejected(string contentType, byte[] head) =>
+        AttachmentSniffer.Matches(contentType, head).ShouldBeFalse();
+
+    [Fact]
+    public void Unknown_content_type_never_matches() =>
+        AttachmentSniffer.Matches("application/zip", [0x50, 0x4B, 0x03, 0x04]).ShouldBeFalse();
+}
