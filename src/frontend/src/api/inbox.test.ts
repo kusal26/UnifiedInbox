@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { createInboxApi } from './inbox';
 
 describe('createInboxApi', () => {
+  it('includes credentials so login can receive the refresh cookie', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ accessToken: 'jwt' })));
+
+    await createInboxApi(() => null, fetcher).login({ tenantSlug: 'acme', email: 'owner@acme.test', password: 'secret' });
+
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/auth/login', expect.objectContaining({ credentials: 'include' }));
+  });
+
   it('sends a message with authentication and an idempotency key', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ id: 'message-1' }), {

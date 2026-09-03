@@ -7,7 +7,12 @@ public sealed class WhatsAppPayloadParser
 {
     public IReadOnlyList<WhatsAppInbound> Parse(JsonElement payload)
     {
-        if (!payload.TryGetProperty("messages", out var messages) || messages.ValueKind != JsonValueKind.Array) return [];
+        if (!payload.TryGetProperty("messages", out var messages))
+        {
+            try { messages = payload.GetProperty("entry")[0].GetProperty("changes")[0].GetProperty("value").GetProperty("messages"); }
+            catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException) { return []; }
+        }
+        if (messages.ValueKind != JsonValueKind.Array) return [];
         return messages.EnumerateArray().Select(x => new WhatsAppInbound(x.GetProperty("id").GetString() ?? "", x.GetProperty("from").GetString() ?? "", x.TryGetProperty("text", out var t) ? t.GetProperty("body").GetString() : null, x.TryGetProperty("image", out var i) ? i.GetProperty("mime_type").GetString() : null)).ToList();
     }
 }

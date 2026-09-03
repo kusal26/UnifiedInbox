@@ -87,7 +87,7 @@ export function createInboxApi(getToken: () => string | null, fetcher: Fetcher =
   const endpoint = (path: string) => `/api/v1${path}`;
 
   return {
-    login: (credentials) => request(fetcher, endpoint('/auth/login'), { method: 'POST', body: credentials }),
+    login: (credentials) => request(fetcher, endpoint('/auth/login'), { method: 'POST', credentials: 'include', body: credentials }),
     listConversations: (filters = {}) => {
       const params = new URLSearchParams();
       if (filters.search) params.set('search', filters.search);

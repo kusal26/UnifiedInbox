@@ -1,12 +1,16 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using UnifiedInbox.Infrastructure;
+using UnifiedInbox.Application;
+using UnifiedInbox.Infrastructure.Channels.WhatsApp;
 
 namespace UnifiedInbox.Api.Controllers;
 
-[ApiController, Route("api/v1/webhooks")]
-public sealed class WebhooksController(InMemoryInboxStore store) : ControllerBase
+[AllowAnonymous, ApiController, Route("api/v1/webhooks/whatsapp")]
+public sealed class WebhooksController(IWebhookService webhooks, WhatsAppSignatureValidator signatures, IConfiguration configuration) : ControllerBase
 {
-    [HttpPost("whatsapp/{channelId:guid}")]
-    public IActionResult Receive(Guid channelId, JsonElement payload) { var channel = store.Channels.FirstOrDefault(x => x.Id == channelId); if (channel is null) return NotFound(); var raw = JsonSerializer.SerializeToUtf8Bytes(payload); var externalId = payload.TryGetProperty("externalMessageId", out var id) ? id.GetString() ?? Guid.NewGuid().ToString("N") : Guid.NewGuid().ToString("N"); if (!store.PersistWebhook(channelId, externalId, raw)) return Accepted(new { received = true, duplicate = true }); var c = store.EnsureConversation(channel.TenantId); var body = payload.TryGetProperty("body", out var text) ? text.GetString() ?? "" : ""; store.AddInbound(channel.TenantId, c.Id, body, externalId); return Accepted(new { received = true }); }
+    [HttpGet] public IActionResult Verify([FromQuery(Name = "hub.mode")] string? mode, [FromQuery(Name = "hub.verify_token")] string? verifyToken, [FromQuery(Name = "hub.challenge")] string? challenge) => mode == "subscribe" && verifyToken == configuration["WhatsApp:VerifyToken"] ? Content(challenge ?? "") : Forbid();
+    [HttpPost("{channelId:guid}")]
+    public async Task<IActionResult> Receive(Guid channelId, CancellationToken token) { using var memory = new MemoryStream(); await Request.Body.CopyToAsync(memory, token); var body = memory.ToArray(); var secret = configuration["WhatsApp:AppSecret"] ?? ""; if (string.IsNullOrWhiteSpace(secret) || !signatures.IsValid(body, Request.Headers["X-Hub-Signature-256"], secret)) return Unauthorized(); using var json = JsonDocument.Parse(body); var eventId = FindEventId(json.RootElement) ?? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(body)); return await webhooks.PersistAsync(channelId, eventId, body, token) ? Ok(new { received = true }) : NotFound(); }
+    private static string? FindEventId(JsonElement root) { if (root.TryGetProperty("externalMessageId", out var id)) return id.GetString(); try { return root.GetProperty("entry")[0].GetProperty("changes")[0].GetProperty("value").GetProperty("messages")[0].GetProperty("id").GetString(); } catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException) { return null; } }
 }

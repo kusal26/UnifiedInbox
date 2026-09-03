@@ -1,27 +1,59 @@
-using UnifiedInbox.Infrastructure;
-using UnifiedInbox.Infrastructure.Persistence;
+using System.Text;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+using RabbitMQ.Client;
+using UnifiedInbox.Api.Hubs;
+using UnifiedInbox.Api.Security;
+using UnifiedInbox.Application;
+using UnifiedInbox.Domain;
+using UnifiedInbox.Infrastructure.Channels.WhatsApp;
+using UnifiedInbox.Infrastructure.Persistence;
+using UnifiedInbox.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddSingleton<InMemoryInboxStore>();
-builder.Services.AddSingleton<UnifiedInbox.Application.IInboxStore>(x => x.GetRequiredService<InMemoryInboxStore>());
+var connectionString = builder.Configuration.GetConnectionString("Database") ?? builder.Configuration.GetConnectionString("Postgres") ?? Environment.GetEnvironmentVariable("POSTGRES_CONNECTION") ?? "Host=localhost;Port=5432;Database=unified_inbox;Username=unified_inbox;Password=local_only_password";
+var signingKey = builder.Configuration["Jwt:SigningKey"] ?? Environment.GetEnvironmentVariable("JWT_SIGNING_KEY") ?? (builder.Environment.IsDevelopment() ? "development-only-signing-key-change-before-production" : throw new InvalidOperationException("Jwt:SigningKey is required."));
+builder.Configuration["Jwt:SigningKey"] = signingKey;
+
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<UnifiedInbox.Api.ProblemExceptionHandler>();
 builder.Services.AddControllers();
-builder.Services.AddSignalR();
-var postgres = builder.Configuration.GetConnectionString("Postgres") ?? Environment.GetEnvironmentVariable("POSTGRES_CONNECTION");
-if (!string.IsNullOrWhiteSpace(postgres)) builder.Services.AddDbContext<InboxDbContext>(options => options.UseNpgsql(postgres));
-builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
-var app = builder.Build();
-app.UseCors();
-app.Use(async (context, next) =>
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentTenant, CurrentRequestContext>();
+builder.Services.AddScoped<TenantSessionInterceptor>();
+builder.Services.AddDbContext<InboxDbContext>((services, options) => options.UseNpgsql(connectionString).AddInterceptors(services.GetRequiredService<TenantSessionInterceptor>()));
+builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<ITokenIssuer, JwtTokenIssuer>();
+builder.Services.AddScoped<IAuthService, AuthenticationService>();
+builder.Services.AddScoped<IInboxService, PersistentInboxService>();
+builder.Services.AddScoped<IAdministrationService, AdministrationService>();
+builder.Services.AddScoped<IWebhookService, WebhookService>();
+builder.Services.AddScoped<IAttachmentService, AttachmentService>();
+builder.Services.AddSingleton<WhatsAppSignatureValidator>();
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
-    var store = context.RequestServices.GetRequiredService<InMemoryInboxStore>();
-    var header = context.Request.Headers.Authorization.ToString();
-    if (header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) && store.TrySession(header[7..], out var tenantId, out var userId))
-    { context.Items["tenantId"] = tenantId; context.Items["userId"] = userId; }
-    await next();
+    options.TokenValidationParameters = new TokenValidationParameters { ValidateIssuer = true, ValidIssuer = builder.Configuration["Jwt:Issuer"], ValidateAudience = true, ValidAudience = builder.Configuration["Jwt:Audience"], ValidateLifetime = true, ValidateIssuerSigningKey = true, IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)), ClockSkew = TimeSpan.FromSeconds(30) };
+    options.Events = new JwtBearerEvents { OnMessageReceived = context => { if (context.Request.Path.StartsWithSegments("/hubs/inbox") && context.Request.Query.TryGetValue("access_token", out var token)) context.Token = token; return Task.CompletedTask; } };
 });
-app.MapControllers();
-app.MapHub<UnifiedInbox.Api.Hubs.InboxHub>("/hubs/inbox");
+builder.Services.AddAuthorizationBuilder().AddPolicy("Admin", policy => policy.RequireRole(nameof(UserRole.Owner), nameof(UserRole.Admin))).AddPolicy("Owner", policy => policy.RequireRole(nameof(UserRole.Owner)));
+var signalR = builder.Services.AddSignalR();
+var redis = builder.Configuration["Redis:Connection"] ?? Environment.GetEnvironmentVariable("REDIS_CONNECTION"); if (!string.IsNullOrWhiteSpace(redis)) signalR.AddStackExchangeRedis(redis);
+var rabbit = builder.Configuration["RabbitMq:Connection"] ?? Environment.GetEnvironmentVariable("RABBITMQ_CONNECTION");
+if (!string.IsNullOrWhiteSpace(rabbit)) { builder.Services.AddSingleton(new ConnectionFactory { Uri = new Uri(rabbit), AutomaticRecoveryEnabled = true }); builder.Services.AddHostedService<RealtimeSubscriber>(); }
+builder.Services.AddRateLimiter(options => { options.RejectionStatusCode = 429; options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context => RateLimitPartition.GetFixedWindowLimiter(context.User.FindFirst("tenant_id")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous", _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 })); });
+builder.Services.AddOpenTelemetry().WithTracing(tracing => tracing.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()).WithMetrics(metrics => metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation());
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.WithOrigins(builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? ["http://localhost:5173"]).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
+
+var app = builder.Build();
+app.UseExceptionHandler(); app.UseRateLimiter(); app.UseCors(); app.UseAuthentication(); app.UseAuthorization();
+app.MapControllers(); app.MapHub<InboxHub>("/hubs/inbox", options => options.CloseOnAuthenticationExpiration = true);
+if (!app.Environment.IsEnvironment("Test")) { await using var scope = app.Services.CreateAsyncScope(); var db = scope.ServiceProvider.GetRequiredService<InboxDbContext>(); await db.Database.MigrateAsync(); if (app.Environment.IsDevelopment()) await DevelopmentSeeder.SeedAsync(db, scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>()); }
 app.Run();
 
 public partial class Program { }
