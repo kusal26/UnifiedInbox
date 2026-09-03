@@ -1,14 +1,53 @@
 services:
   postgres:
-    image: postgres:18
-    environment:
-      POSTGRES_DB: unified_inbox
-      POSTGRES_USER: unified_inbox
-      POSTGRES_PASSWORD: local_only_password
-    ports: ["5432:5432"]
+    image: postgres:18-alpine
+    environment: { POSTGRES_DB: unified_inbox, POSTGRES_USER: unified_inbox, POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_only_password} }
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck: { test: [CMD-SHELL, pg_isready -U unified_inbox], interval: 5s, timeout: 5s, retries: 20 }
   rabbitmq:
-    image: rabbitmq:4-management
-    ports: ["5672:5672", "15672:15672"]
+    image: rabbitmq:4-management-alpine
+    volumes: [rabbitmq-data:/var/lib/rabbitmq]
+    healthcheck: { test: [CMD, rabbitmq-diagnostics, -q, ping], interval: 5s, timeout: 5s, retries: 20 }
   redis:
-    image: redis:8
-    ports: ["6379:6379"]
+    image: redis:8-alpine
+    command: redis-server --appendonly yes
+    volumes: [redis-data:/data]
+    healthcheck: { test: [CMD, redis-cli, ping], interval: 5s, timeout: 5s, retries: 20 }
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address :9001
+    environment: { MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}, MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin} }
+    volumes: [minio-data:/data]
+    healthcheck: { test: [CMD, mc, ready, local], interval: 5s, timeout: 5s, retries: 20 }
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025"]
+  api:
+    build: { context: ., dockerfile: src/backend/UnifiedInbox.Api/Dockerfile }
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ConnectionStrings__Database: Host=postgres;Database=unified_inbox;Username=unified_inbox;Password=${POSTGRES_PASSWORD:-local_only_password}
+      RabbitMq__Connection: amqp://guest:guest@rabbitmq:5672/
+      Redis__Connection: redis:6379
+      Jwt__Issuer: unified-inbox
+      Jwt__Audience: unified-inbox-web
+      Jwt__SigningKey: ${JWT_SIGNING_KEY}
+      Credentials__MasterKey: ${CREDENTIAL_MASTER_KEY}
+      WhatsApp__AppSecret: ${WHATSAPP_APP_SECRET:-}
+      WhatsApp__VerifyToken: ${WHATSAPP_VERIFY_TOKEN:-development-verify-token}
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
+  worker:
+    build: { context: ., dockerfile: src/backend/UnifiedInbox.Worker/Dockerfile }
+    environment:
+      DOTNET_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ConnectionStrings__Database: Host=postgres;Database=unified_inbox;Username=unified_inbox;Password=${POSTGRES_PASSWORD:-local_only_password}
+      RabbitMq__Connection: amqp://guest:guest@rabbitmq:5672/
+      Credentials__MasterKey: ${CREDENTIAL_MASTER_KEY}
+      WhatsApp__UseFake: ${WHATSAPP_USE_FAKE:-true}
+    depends_on: { postgres: { condition: service_healthy }, rabbitmq: { condition: service_healthy } }
+  frontend:
+    build: { context: ., dockerfile: src/frontend/Dockerfile }
+    ports: ["8080:80"]
+    depends_on: [api]
+
+volumes: { postgres-data: {}, rabbitmq-data: {}, redis-data: {}, minio-data: {} }

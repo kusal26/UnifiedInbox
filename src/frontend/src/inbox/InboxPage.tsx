@@ -23,6 +23,7 @@ export function InboxPage({ api }: { api: InboxApi }) {
   const [cannedSearch, setCannedSearch] = useState('');
   const [attachmentError, setAttachmentError] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [revision, setRevision] = useState(0);
   const readThrough = useRef<string | null>(null);
 
   useEffect(() => {
@@ -36,7 +37,9 @@ export function InboxPage({ api }: { api: InboxApi }) {
       })
       .catch(() => active && setConversations([]));
     return () => { active = false; };
-  }, [api, search, filter, unreadOnly]);
+  }, [api, search, filter, unreadOnly, revision]);
+
+  useEffect(() => { const refresh = () => setRevision(value => value + 1); window.addEventListener('inbox:refresh', refresh); return () => window.removeEventListener('inbox:refresh', refresh); }, []);
 
   const selected = conversations.find((item) => item.id === selectedId) ?? null;
   const loadTimeline = () => {

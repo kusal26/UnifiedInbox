@@ -1,14 +1,16 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
-using UnifiedInbox.Infrastructure;
 
 namespace UnifiedInbox.Api.Hubs;
 
-public sealed class InboxHub(InMemoryInboxStore store) : Hub
+[Authorize]
+public sealed class InboxHub : Hub
 {
     public override async Task OnConnectedAsync()
     {
-        var authorization = Context.GetHttpContext()?.Request.Headers.Authorization.ToString();
-        if (authorization?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true && store.TrySession(authorization[7..], out var tenantId, out _)) await Groups.AddToGroupAsync(Context.ConnectionId, $"tenant:{tenantId}");
+        var tenantId = Context.User?.FindFirst("tenant_id")?.Value;
+        if (Guid.TryParse(tenantId, out var parsed)) await Groups.AddToGroupAsync(Context.ConnectionId, $"tenant:{parsed}");
+        else Context.Abort();
         await base.OnConnectedAsync();
     }
 }

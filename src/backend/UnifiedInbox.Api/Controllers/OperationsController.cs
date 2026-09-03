@@ -1,12 +1,13 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using UnifiedInbox.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.Api.Controllers;
 
 [ApiController, Route("api/v1/operations")]
-public sealed class OperationsController(InMemoryInboxStore store) : ControllerBase
+public sealed class OperationsController(InboxDbContext db) : ControllerBase
 {
-    [HttpGet("health")] public IActionResult Health() => Ok(new { status = "ok", outboxPending = store.Outbox.Count, channels = store.Channels.Count(x => x.IsHealthy) });
-    [HttpGet("notifications")] public IActionResult Notifications() { var tenant = HttpContext.Items["tenantId"] is Guid t ? t : default; return tenant == default ? Unauthorized() : Ok(store.Notifications.Where(x => x.TenantId == tenant)); }
-    [HttpPost("attachments/cleanup")] public IActionResult Cleanup() { store.CleanupExpiredAttachments(); return Ok(); }
+    [AllowAnonymous, HttpGet("health")] public IActionResult Health() => Ok(new { status = "ok" });
+    [AllowAnonymous, HttpGet("ready")] public async Task<IActionResult> Ready(CancellationToken token) => await db.Database.CanConnectAsync(token) ? Ok(new { status = "ready" }) : StatusCode(503, Problem(title: "Database unavailable", statusCode: 503));
 }
