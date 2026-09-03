@@ -22,6 +22,18 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     ports: ["8025:8025"]
+  clamav:
+    image: mkodockx/docker-clamav:alpine
+    volumes: [clamav-data:/store]
+  migrator:
+    build: { context: ., dockerfile: src/backend/UnifiedInbox.Api/Dockerfile }
+    command: ["dotnet", "UnifiedInbox.Api.dll", "--migrate"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ConnectionStrings__Database: Host=postgres;Database=unified_inbox;Username=unified_inbox;Password=${POSTGRES_PASSWORD:-local_only_password}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY}
+      Credentials__MasterKey: ${CREDENTIAL_MASTER_KEY}
+    depends_on: { postgres: { condition: service_healthy } }
   api:
     build: { context: ., dockerfile: src/backend/UnifiedInbox.Api/Dockerfile }
     environment:
@@ -35,7 +47,10 @@ services:
       Credentials__MasterKey: ${CREDENTIAL_MASTER_KEY}
       WhatsApp__AppSecret: ${WHATSAPP_APP_SECRET:-}
       WhatsApp__VerifyToken: ${WHATSAPP_VERIFY_TOKEN:-development-verify-token}
-    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
+      Mail__SmtpHost: mailpit
+      Mail__SmtpPort: 1025
+      Mail__From: ${MAIL_FROM:-no-reply@unifiedinbox.local}
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy }, migrator: { condition: service_completed_successfully } }
   worker:
     build: { context: ., dockerfile: src/backend/UnifiedInbox.Worker/Dockerfile }
     environment:
@@ -44,10 +59,12 @@ services:
       RabbitMq__Connection: amqp://guest:guest@rabbitmq:5672/
       Credentials__MasterKey: ${CREDENTIAL_MASTER_KEY}
       WhatsApp__UseFake: ${WHATSAPP_USE_FAKE:-true}
-    depends_on: { postgres: { condition: service_healthy }, rabbitmq: { condition: service_healthy } }
+      Mail__SmtpHost: mailpit
+      Mail__SmtpPort: 1025
+    depends_on: { postgres: { condition: service_healthy }, rabbitmq: { condition: service_healthy }, migrator: { condition: service_completed_successfully } }
   frontend:
     build: { context: ., dockerfile: src/frontend/Dockerfile }
     ports: ["8080:80"]
     depends_on: [api]
 
-volumes: { postgres-data: {}, rabbitmq-data: {}, redis-data: {}, minio-data: {} }
+volumes: { postgres-data: {}, rabbitmq-data: {}, redis-data: {}, minio-data: {}, clamav-data: {} }

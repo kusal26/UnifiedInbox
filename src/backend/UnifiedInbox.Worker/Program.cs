@@ -14,7 +14,7 @@ builder.Services.AddHttpClient<WhatsAppMessageSender>();
 builder.Services.AddHostedService<OutboxDispatcher>();
 builder.Services.AddHostedService<MessagingConsumer>();
 var host = builder.Build();
-await using (var scope = host.Services.CreateAsyncScope()) await scope.ServiceProvider.GetRequiredService<InboxDbContext>().Database.MigrateAsync();
+// The worker never migrates; the one-shot migrator container owns schema changes.
 await host.RunAsync();
 
 namespace UnifiedInbox.Worker { public sealed class WorkerTenantContext : ICurrentTenant { public Guid? TenantId => null; public Guid? UserId => null; public UnifiedInbox.Domain.UserRole? Role => null; } }

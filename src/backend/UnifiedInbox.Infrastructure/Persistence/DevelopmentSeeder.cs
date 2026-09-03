@@ -17,6 +17,7 @@ public static class DevelopmentSeeder
         var conversation = new Conversation { TenantId = tenant.Id, ChannelId = channel.Id, ContactId = contact.Id, ExternalConversationId = "customer-1" };
         var message = new Message { TenantId = tenant.Id, ChannelId = channel.Id, ConversationId = conversation.Id, Direction = MessageDirection.Inbound, Body = "Welcome to the shared inbox", ExternalMessageId = "seed-1", Sequence = 1 };
         conversation.RecordInboundActivity(message.CreatedAt);
-        db.AddRange(tenant, owner, channel, contact, conversation, message); await db.SaveChangesAsync();
+        var route = new ProviderRoute { Provider = "whatsapp", ProviderAssetId = "business-acme", TenantId = tenant.Id, ChannelId = channel.Id };
+        db.AddRange(tenant, owner, channel, contact, conversation, message, route); await db.SaveChangesAsync();
     }
 }

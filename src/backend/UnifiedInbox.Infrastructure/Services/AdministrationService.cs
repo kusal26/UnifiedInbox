@@ -30,4 +30,13 @@ public sealed class WebhookService(InboxDbContext db) : IWebhookService
         db.WebhookReceipts.Add(receipt); db.Outbox.Add(new OutboxEvent(Guid.NewGuid(), channel.TenantId, "webhook.received", System.Text.Json.JsonSerializer.Serialize(new { receiptId = receipt.Id }), DateTimeOffset.UtcNow));
         channel.LastWebhookAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(token); return true;
     }
+
+    public async Task<bool> PersistByAssetAsync(string providerAssetId, string providerEventId, byte[] rawBody, CancellationToken token)
+    {
+        // Never trust tenant/channel ids from webhook input: resolve via the
+        // unscoped provider route table keyed by phone_number_id.
+        var route = await db.ProviderRoutes.SingleOrDefaultAsync(x => x.Provider == "whatsapp" && x.ProviderAssetId == providerAssetId, token);
+        if (route is null) return false;
+        return await PersistAsync(route.ChannelId, providerEventId, rawBody, token);
+    }
 }

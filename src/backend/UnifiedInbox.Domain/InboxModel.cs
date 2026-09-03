@@ -128,6 +128,19 @@ public sealed class RefreshToken : ITenantScoped
     public Guid Id { get; set; } = Guid.NewGuid(); public Guid TenantId { get; set; } public Guid UserId { get; set; }
     public string TokenHash { get; set; } = ""; public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? RevokedAt { get; set; } public Guid? ReplacedById { get; set; }
+    /// <summary>Token family for reuse detection. All rotations of one session share a family.</summary>
+    public Guid FamilyId { get; set; } = Guid.NewGuid();
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public enum VerificationPurpose { EmailVerification, PasswordReset }
+
+public sealed class VerificationToken : ITenantScoped
+{
+    public Guid Id { get; set; } = Guid.NewGuid(); public Guid TenantId { get; set; } public Guid UserId { get; set; }
+    public string TokenHash { get; set; } = ""; public VerificationPurpose Purpose { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? ConsumedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -136,6 +149,31 @@ public sealed class Invitation : ITenantScoped
     public Guid Id { get; set; } = Guid.NewGuid(); public Guid TenantId { get; set; } public string Email { get; set; } = "";
     public UserRole Role { get; set; } public string TokenHash { get; set; } = ""; public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? AcceptedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? RevokedAt { get; set; }
+    public Guid? InvitedById { get; set; }
+}
+
+/// <summary>
+/// Unscoped routing table. Webhooks resolve tenant/channel from the provider asset id
+/// (WhatsApp phone_number_id) BEFORE entering a tenant context. Contains no secrets.
+/// </summary>
+public sealed class ProviderRoute
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Provider { get; set; } = "whatsapp";
+    public string ProviderAssetId { get; set; } = "";
+    public Guid TenantId { get; set; }
+    public Guid ChannelId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class ChannelHealth : ITenantScoped
+{
+    public Guid Id { get; set; } = Guid.NewGuid(); public Guid TenantId { get; set; } public Guid ChannelId { get; set; }
+    public bool IsHealthy { get; set; }
+    public string Reason { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public sealed class Attachment : ITenantScoped

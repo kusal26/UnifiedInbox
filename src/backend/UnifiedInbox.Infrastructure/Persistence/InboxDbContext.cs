@@ -21,8 +21,12 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
     public DbSet<CannedResponseEntity> CannedResponses => Set<CannedResponseEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<AuditEntryEntity> AuditEntries => Set<AuditEntryEntity>();
+    public DbSet<VerificationToken> VerificationTokens => Set<VerificationToken>();
+    public DbSet<ChannelHealth> ChannelHealth => Set<ChannelHealth>();
     public DbSet<global::UnifiedInbox.Domain.WebhookReceipt> WebhookReceipts => Set<global::UnifiedInbox.Domain.WebhookReceipt>();
     public DbSet<OutboxEvent> Outbox => Set<OutboxEvent>();
+    /// <summary>Unscoped: webhook routing only. Never expose via tenant queries.</summary>
+    public DbSet<ProviderRoute> ProviderRoutes => Set<ProviderRoute>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -33,6 +37,15 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         ConfigureTenant<InternalNote>(modelBuilder); ConfigureTenant<RefreshToken>(modelBuilder); ConfigureTenant<Invitation>(modelBuilder);
         ConfigureTenant<Attachment>(modelBuilder); ConfigureTenant<CannedResponseEntity>(modelBuilder); ConfigureTenant<NotificationEntity>(modelBuilder);
         ConfigureTenant<AuditEntryEntity>(modelBuilder); ConfigureTenant<global::UnifiedInbox.Domain.WebhookReceipt>(modelBuilder); ConfigureTenant<OutboxEvent>(modelBuilder);
+        ConfigureTenant<VerificationToken>(modelBuilder); ConfigureTenant<ChannelHealth>(modelBuilder);
+        // ProviderRoute is deliberately unscoped: webhooks must resolve tenant from
+        // provider asset id before any tenant context exists.
+        modelBuilder.Entity<ProviderRoute>().HasKey(x => x.Id);
+        modelBuilder.Entity<ProviderRoute>().HasIndex(x => new { x.Provider, x.ProviderAssetId }).IsUnique();
+        // Explicit tenant-aware relations
+        modelBuilder.Entity<Conversation>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.ChannelId }).HasPrincipalKey(x => x.Id).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Message>().HasOne<Conversation>().WithMany().HasForeignKey(x => x.ConversationId).HasPrincipalKey(x => x.Id).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<InternalNote>().HasOne<Conversation>().WithMany().HasForeignKey(x => x.ConversationId).HasPrincipalKey(x => x.Id).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<User>().HasIndex(x => new { x.TenantId, x.NormalizedEmail }).IsUnique();
         modelBuilder.Entity<Channel>().HasIndex(x => new { x.TenantId, x.Platform, x.ExternalAccountId }).IsUnique();
         modelBuilder.Entity<ChannelCredential>().HasIndex(x => x.ChannelId).IsUnique();
@@ -46,6 +59,8 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         modelBuilder.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<Invitation>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<CannedResponseEntity>().HasIndex(x => new { x.TenantId, x.Shortcut }).IsUnique();
+        modelBuilder.Entity<VerificationToken>().HasIndex(x => x.TokenHash).IsUnique();
+        modelBuilder.Entity<RefreshToken>().HasIndex(x => x.FamilyId);
         modelBuilder.Entity<global::UnifiedInbox.Domain.WebhookReceipt>().HasIndex(x => new { x.ChannelId, x.ProviderEventId }).IsUnique();
         modelBuilder.Entity<OutboxEvent>().HasIndex(x => new { x.Status, x.AvailableAt });
     }
@@ -53,12 +68,18 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
     private void ConfigureTenant<TEntity>(ModelBuilder modelBuilder) where TEntity : class, ITenantScoped
     {
         modelBuilder.Entity<TEntity>().HasKey("Id");
-        modelBuilder.Entity<TEntity>().HasQueryFilter("TenantFilter", entity => CurrentTenantId == null || entity.TenantId == CurrentTenantId);
+        // Fail closed: with no tenant in context, scoped queries return nothing.
+        // Privileged code (login, webhook routing, worker) must opt out explicitly
+        // via IgnoreQueryFilters for a single query.
+        modelBuilder.Entity<TEntity>().HasQueryFilter("TenantFilter", entity => CurrentTenantId != null && entity.TenantId == CurrentTenantId);
         modelBuilder.Entity<TEntity>().HasIndex("TenantId");
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        // Cross-tenant writes are rejected when a tenant context is established.
+        // Anonymous bootstrap (registration) and worker paths set TenantId explicitly
+        // on new entities; reads remain fail-closed via query filters + FORCE RLS.
         if (CurrentTenantId is { } tenantId)
         {
             foreach (var entry in ChangeTracker.Entries<ITenantScoped>().Where(x => x.State == EntityState.Added))

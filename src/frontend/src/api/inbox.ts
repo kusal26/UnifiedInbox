@@ -46,7 +46,7 @@ export interface InboxApi {
   addNote(conversationId: string, body: string): Promise<ActivityItem>;
   setStatus(conversationId: string, status: ConversationStatus): Promise<Conversation>;
   markRead(conversationId: string, throughSequence: number): Promise<Conversation>;
-  sendMessage(conversationId: string, body: string, idempotencyKey: string): Promise<ActivityItem>;
+  sendMessage(conversationId: string, body: string, idempotencyKey: string, options?: { templateName?: string; attachmentIds?: string[] }): Promise<ActivityItem>;
 }
 
 type ApiConversation = Omit<Conversation, 'status'> & { status: number | ConversationStatus };
@@ -93,8 +93,10 @@ export function createInboxApi(getToken: () => string | null, fetcher: Fetcher =
       if (filters.search) params.set('search', filters.search);
       if (filters.status) params.set('status', filters.status);
       const query = params.size ? `?${params}` : '';
-      return request<ApiConversation[]>(fetcher, endpoint(`/conversations${query}`), { headers: authorized() })
-        .then((items) => items.map(normalizeConversation));
+      // Compatibility parser: the API now returns { items, nextCursor }; older
+      // builds returned a bare array. Accept both during rollout.
+      return request<ApiConversation[] | { items: ApiConversation[] }>(fetcher, endpoint(`/conversations${query}`), { headers: authorized() })
+        .then((page) => (Array.isArray(page) ? page : page.items).map(normalizeConversation));
     },
     getActivity: (conversationId, options = {}) => {
       const params = new URLSearchParams();
@@ -107,6 +109,6 @@ export function createInboxApi(getToken: () => string | null, fetcher: Fetcher =
     addNote: (conversationId, body) => request<ApiActivityItem>(fetcher, endpoint(`/conversations/${conversationId}/notes`), { method: 'POST', headers: authorized(), body: { body } }).then(normalizeActivityItem),
     setStatus: (conversationId, status) => request<ApiConversation>(fetcher, endpoint(`/conversations/${conversationId}/status`), { method: 'PATCH', headers: authorized(), body: { status: toConversationStatus(status) } }).then(normalizeConversation),
     markRead: (conversationId, throughSequence) => request<ApiConversation>(fetcher, endpoint(`/conversations/${conversationId}/read`), { method: 'PUT', headers: authorized(), body: { throughSequence } }).then(normalizeConversation),
-    sendMessage: (conversationId, body, idempotencyKey) => request<ApiActivityItem>(fetcher, endpoint(`/conversations/${conversationId}/messages`), { method: 'POST', headers: authorized({ 'Idempotency-Key': idempotencyKey }), body: { body } }).then(normalizeActivityItem),
+    sendMessage: (conversationId, body, idempotencyKey, options = {}) => request<ApiActivityItem>(fetcher, endpoint(`/conversations/${conversationId}/messages`), { method: 'POST', headers: authorized({ 'Idempotency-Key': idempotencyKey }), body: { body, templateName: options.templateName, attachmentIds: options.attachmentIds } }).then(normalizeActivityItem),
   };
 }

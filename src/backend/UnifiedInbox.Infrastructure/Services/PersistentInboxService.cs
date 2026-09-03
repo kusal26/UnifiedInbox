@@ -45,13 +45,32 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
         return new(ActivityKind.InternalNote, note.Id, id, note.Body, note.CreatedAt, sequence, userId, null);
     }
 
-    public async Task<ActivityItem?> SendAsync(Guid id, string body, string idempotencyKey, CancellationToken cancellationToken)
+    public async Task<ActivityItem?> SendAsync(Guid id, string body, string idempotencyKey, string? templateName, IReadOnlyList<Guid>? attachmentIds, CancellationToken cancellationToken)
     {
         var conversation = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (conversation is null || current.UserId is not { } userId) return null;
         var existing = await db.Messages.SingleOrDefaultAsync(x => x.ConversationId == id && x.IdempotencyKey == idempotencyKey, cancellationToken);
         if (existing is not null) return ToActivity(existing);
+        // 24-hour customer-service window enforced before accepting free-form sends.
+        var policy = new WhatsAppMessagingPolicy();
+        var decision = policy.Evaluate(conversation.LastCustomerMessageAt, DateTimeOffset.UtcNow, hasApprovedTemplate: !string.IsNullOrWhiteSpace(templateName));
+        if (decision == WhatsAppSendDecision.TemplateRequired)
+            throw new InboxException("messaging_window_closed", "The 24-hour customer service window is closed. Send an approved template message.", 422);
         var sequence = await NextSequence(id, cancellationToken); var message = new Message { TenantId = conversation.TenantId, ChannelId = conversation.ChannelId, ConversationId = id, Direction = MessageDirection.Outbound, SenderUserId = userId, Body = RequireBody(body), IdempotencyKey = idempotencyKey, Status = MessageStatus.Pending, Sequence = sequence };
-        db.Messages.Add(message); Touch(conversation); AddOutbox(conversation.TenantId, "outbound.message.requested", message.Id); await db.SaveChangesAsync(cancellationToken); return ToActivity(message);
+        db.Messages.Add(message);
+        if (attachmentIds is { Count: > 0 })
+        {
+            var ready = await db.Attachments.Where(x => attachmentIds.Contains(x.Id)).ToListAsync(cancellationToken);
+            if (ready.Count != attachmentIds.Count) throw new InboxException("attachment_not_found", "One or more attachments were not found.", 400);
+            foreach (var attachment in ready)
+            {
+                if (attachment.TenantId != conversation.TenantId) throw new InboxException("attachment_not_found", "One or more attachments were not found.", 403);
+                if (attachment.Status != AttachmentStatus.Staged || attachment.MessageId is not null) throw new InboxException("attachment_already_claimed", "An attachment was already claimed or is no longer staged.", 409);
+                if (attachment.ExpiresAt <= DateTimeOffset.UtcNow) throw new InboxException("attachment_expired", "An attachment staging record has expired.", 410);
+                attachment.MessageId = message.Id;
+                attachment.Status = AttachmentStatus.Claimed;
+            }
+        }
+        Touch(conversation); AddOutbox(conversation.TenantId, "outbound.message.requested", message.Id); await db.SaveChangesAsync(cancellationToken); return ToActivity(message);
     }
 
     public async Task<ConversationSummary?> SetStatusAsync(Guid id, ConversationStatus status, CancellationToken cancellationToken) { var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null; c.Status = status; Touch(c); AddOutbox(c.TenantId, "conversation.updated", c.Id); await AuditAndSave(c.TenantId, "conversation.status.changed", c.Id, cancellationToken); return await SummaryQuery().SingleAsync(x => x.Id == id, cancellationToken); }

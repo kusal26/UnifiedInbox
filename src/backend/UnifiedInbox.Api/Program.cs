@@ -34,6 +34,7 @@ builder.Services.AddScoped<IInboxService, PersistentInboxService>();
 builder.Services.AddScoped<IAdministrationService, AdministrationService>();
 builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IAttachmentService, AttachmentService>();
+builder.Services.AddSingleton<IMailSender, SmtpMailSender>();
 builder.Services.AddSingleton<WhatsAppSignatureValidator>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
@@ -53,7 +54,39 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.Wi
 var app = builder.Build();
 app.UseExceptionHandler(); app.UseRateLimiter(); app.UseCors(); app.UseAuthentication(); app.UseAuthorization();
 app.MapControllers(); app.MapHub<InboxHub>("/hubs/inbox", options => options.CloseOnAuthenticationExpiration = true);
-if (!app.Environment.IsEnvironment("Test")) { await using var scope = app.Services.CreateAsyncScope(); var db = scope.ServiceProvider.GetRequiredService<InboxDbContext>(); await db.Database.MigrateAsync(); if (app.Environment.IsDevelopment()) await DevelopmentSeeder.SeedAsync(db, scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>()); }
+// Migrations run only in the dedicated one-shot migrator container
+// (docker compose service `migrator`) or with --migrate / RUN_MIGRATIONS=true.
+// Ordinary API startup never migrates.
+if (args.Contains("--migrate") || Environment.GetEnvironmentVariable("RUN_MIGRATIONS") == "true")
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var db = scope.ServiceProvider.GetRequiredService<InboxDbContext>();
+    await db.Database.MigrateAsync();
+    if (app.Environment.IsDevelopment() && Environment.GetEnvironmentVariable("SEED_DEVELOPMENT") == "true")
+        await DevelopmentSeeder.SeedAsync(db, scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>());
+    return;
+}
+RejectUnsafeProductionConfiguration(app);
+if (app.Environment.IsDevelopment() && Environment.GetEnvironmentVariable("SEED_DEVELOPMENT") == "true")
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    await DevelopmentSeeder.SeedAsync(scope.ServiceProvider.GetRequiredService<InboxDbContext>(), scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>());
+}
 app.Run();
+
+static void RejectUnsafeProductionConfiguration(WebApplication app)
+{
+    if (!app.Environment.IsProduction()) return;
+    var config = app.Configuration;
+    var fake = (config["WhatsApp:UseFake"] ?? Environment.GetEnvironmentVariable("WHATSAPP_USE_FAKE"))?.ToLowerInvariant();
+    if (fake == "true") throw new InvalidOperationException("Fake WhatsApp provider mode is forbidden in Production.");
+    if (string.IsNullOrWhiteSpace(config["WhatsApp:AppSecret"] ?? Environment.GetEnvironmentVariable("WHATSAPP_APP_SECRET"))) throw new InvalidOperationException("WhatsApp:AppSecret is required in Production.");
+    if (string.IsNullOrWhiteSpace(config["WhatsApp:VerifyToken"] ?? Environment.GetEnvironmentVariable("WHATSAPP_VERIFY_TOKEN"))) throw new InvalidOperationException("WhatsApp:VerifyToken is required in Production.");
+    var masterKey = config["Credentials:MasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_MASTER_KEY") ?? "";
+    try { if (Convert.FromBase64String(masterKey).Length != 32) throw new InvalidOperationException("Credentials:MasterKey must decode to exactly 32 bytes in Production."); }
+    catch (FormatException) { throw new InvalidOperationException("Credentials:MasterKey must be valid base64 in Production."); }
+    var jwt = config["Jwt:SigningKey"] ?? "";
+    if (jwt.Length < 32 || jwt == "development-only-signing-key-change-before-production") throw new InvalidOperationException("Jwt:SigningKey must be a production secret (32+ chars).");
+}
 
 public partial class Program { }
