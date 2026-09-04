@@ -20,13 +20,7 @@ public sealed class RabbitMqTopologyTests : IAsyncLifetime
         var factory = new ConnectionFactory { Uri = new Uri(container.GetConnectionString()), AutomaticRecoveryEnabled = true };
         connection = await factory.CreateConnectionAsync();
         channel = await connection.CreateChannelAsync(new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true));
-        await channel.ExchangeDeclareAsync("unified-inbox.events", ExchangeType.Topic, durable: true, autoDelete: false);
-        await channel.QueueDeclareAsync("unified-inbox.worker", durable: true, exclusive: false, autoDelete: false);
-        await channel.QueueDeclareAsync("unified-inbox.realtime", durable: true, exclusive: false, autoDelete: false);
-        await channel.QueueBindAsync("unified-inbox.worker", "unified-inbox.events", "webhook.received");
-        await channel.QueueBindAsync("unified-inbox.worker", "unified-inbox.events", "outbound.message.requested");
-        foreach (var key in new[] { "conversation.*", "message.*", "note.*", "channel.*", "notification.*" })
-            await channel.QueueBindAsync("unified-inbox.realtime", "unified-inbox.events", key);
+        await RabbitMqTopology.DeclareAsync(channel);
     }
 
     public async Task DisposeAsync()

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using RabbitMQ.Client;
 using UnifiedInbox.Application.Tenancy;
 using UnifiedInbox.Domain;
+using UnifiedInbox.Infrastructure.Messaging;
 using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.Worker;
@@ -23,7 +24,7 @@ public sealed class RetrySweeper(IServiceScopeFactory scopes, ConnectionFactory 
     {
         await using var connection = await factory.CreateConnectionAsync(stoppingToken);
         await using var channel = await connection.CreateChannelAsync(new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true), stoppingToken);
-        await channel.ExchangeDeclareAsync("unified-inbox.events", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: stoppingToken);
+        await RabbitMqTopology.DeclareAsync(channel, stoppingToken);
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await SweepBatch(channel, stoppingToken); }

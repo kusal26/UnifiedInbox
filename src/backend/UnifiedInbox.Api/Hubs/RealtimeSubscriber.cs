@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using UnifiedInbox.Application;
+using UnifiedInbox.Infrastructure.Messaging;
 
 namespace UnifiedInbox.Api.Hubs;
 
@@ -12,9 +13,7 @@ public sealed class RealtimeSubscriber(ConnectionFactory factory, IHubContext<In
     protected override async Task ExecuteAsync(CancellationToken token)
     {
         await using var connection = await factory.CreateConnectionAsync(token); await using var channel = await connection.CreateChannelAsync(cancellationToken: token);
-        await channel.ExchangeDeclareAsync("unified-inbox.events", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: token);
-        await channel.QueueDeclareAsync("unified-inbox.realtime", durable: true, exclusive: false, autoDelete: false, cancellationToken: token);
-        foreach (var routingKey in new[] { "conversation.*", "message.*", "note.*", "channel.*", "notification.*" }) await channel.QueueBindAsync("unified-inbox.realtime", "unified-inbox.events", routingKey, cancellationToken: token);
+        await RabbitMqTopology.DeclareAsync(channel, token);
         var consumer = new AsyncEventingBasicConsumer(channel);
         consumer.ReceivedAsync += async (_, delivery) =>
         {

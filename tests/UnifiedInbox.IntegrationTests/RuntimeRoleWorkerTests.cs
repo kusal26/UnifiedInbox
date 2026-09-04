@@ -11,6 +11,7 @@ using Shouldly;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
 using UnifiedInbox.Domain;
+using UnifiedInbox.Infrastructure.Messaging;
 using UnifiedInbox.Infrastructure.Persistence;
 using UnifiedInbox.Worker;
 
@@ -81,10 +82,7 @@ public sealed class RuntimeRoleWorkerTests : IAsyncLifetime
 
         await using var broker = await new ConnectionFactory { Uri = new Uri(rabbit.GetConnectionString()) }.CreateConnectionAsync();
         await using var setup = await broker.CreateChannelAsync(new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true));
-        await setup.ExchangeDeclareAsync("unified-inbox.events", ExchangeType.Topic, durable: true, autoDelete: false);
-        await setup.QueueDeclareAsync("unified-inbox.worker", durable: true, exclusive: false, autoDelete: false);
-        await setup.QueueBindAsync("unified-inbox.worker", "unified-inbox.events", "webhook.received");
-        await setup.QueueBindAsync("unified-inbox.worker", "unified-inbox.events", "outbound.message.requested");
+        await RabbitMqTopology.DeclareAsync(setup);
 
         var host = WorkerHost.CreateHost([], builder =>
         {
@@ -164,9 +162,7 @@ public sealed class RuntimeRoleWorkerTests : IAsyncLifetime
 
         await using var broker = await new ConnectionFactory { Uri = new Uri(rabbit.GetConnectionString()) }.CreateConnectionAsync();
         await using var publish = await broker.CreateChannelAsync(new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true));
-        await publish.ExchangeDeclareAsync("unified-inbox.events", ExchangeType.Topic, durable: true, autoDelete: false);
-        await publish.QueueDeclareAsync("unified-inbox.worker", durable: true, exclusive: false, autoDelete: false);
-        await publish.QueueBindAsync("unified-inbox.worker", "unified-inbox.events", "outbound.message.requested");
+        await RabbitMqTopology.DeclareAsync(publish);
         // The header is VALID but routes to tenant B while the message record belongs to tenant A:
         // the consumer must reject the mismatch instead of sending.
         var validForOtherTenant = new Dictionary<string, object?>

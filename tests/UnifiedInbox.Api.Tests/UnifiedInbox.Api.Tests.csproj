@@ -12,7 +12,10 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Shouldly" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
     <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.RabbitMq" />
+    <PackageReference Include="RabbitMQ.Client" />
     <PackageReference Include="SSH.NET" />
   </ItemGroup>
   <ItemGroup><Using Include="Xunit" /></ItemGroup>
