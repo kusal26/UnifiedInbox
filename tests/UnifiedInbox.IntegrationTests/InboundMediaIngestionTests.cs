@@ -239,8 +239,8 @@ public sealed class InboundMediaIngestionTests
     {
         public Task<string> ExchangeCodeAsync(string code, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<GraphPhoneNumber> GetPhoneNumberAsync(string phoneNumberId, string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<string> GetBusinessNameAsync(string businessId, string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> GetTokenScopesAsync(string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<IReadOnlyList<GraphPhoneNumber>> GetPhoneNumbersAsync(string businessId, string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task SubscribeAppAsync(string businessId, string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task UnsubscribeAppAsync(string businessId, string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<IReadOnlyList<WhatsAppTemplateInfo>> ListMessageTemplatesAsync(string businessId, string accessToken, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<WhatsAppTemplateInfo>>([]);

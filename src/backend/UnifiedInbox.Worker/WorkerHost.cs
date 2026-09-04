@@ -5,6 +5,7 @@ using RabbitMQ.Client;
 using UnifiedInbox.Application;
 using UnifiedInbox.Application.Tenancy;
 using UnifiedInbox.Infrastructure.Channels.WhatsApp;
+using UnifiedInbox.Infrastructure.Configuration;
 using UnifiedInbox.Infrastructure.Messaging;
 using UnifiedInbox.Infrastructure.Persistence;
 using UnifiedInbox.Infrastructure.Services;
@@ -52,6 +53,9 @@ public static class WorkerHost
         builder.Services.AddHostedService<ChannelHealthMonitor>();
         builder.Services.AddHostedService<AttachmentCleanupWorker>();
         services?.Invoke(builder.Services);
+        // The worker is a production runtime too: reject fake providers and missing/weak
+        // WhatsApp + credential secrets exactly like the API does.
+        ProductionGuard.Validate(builder.Configuration, builder.Environment.IsProduction());
         return builder.Build();
     }
 }

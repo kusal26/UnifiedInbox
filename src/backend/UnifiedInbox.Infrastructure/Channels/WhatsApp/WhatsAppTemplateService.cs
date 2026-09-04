@@ -48,7 +48,7 @@ public sealed class WhatsAppTemplateService(InboxDbContext db, ICurrentTenant cu
         if (string.IsNullOrWhiteSpace(channel.ExternalBusinessId) || !channel.IsEnabled) return null;
         var credential = await db.ChannelCredentials.SingleOrDefaultAsync(x => x.ChannelId == channel.Id, cancellationToken);
         if (credential is null) return null;
-        try { return (channel.ExternalBusinessId, BuildProtector().Unprotect(credential.EncryptedAccessToken)); }
+        try { return (channel.ExternalBusinessId, CredentialProtector.FromConfiguration(configuration).Unprotect(credential.EncryptedAccessToken)); }
         catch (CryptographicException) { return null; }
     }
 
@@ -77,12 +77,5 @@ public sealed class WhatsAppTemplateService(InboxDbContext db, ICurrentTenant cu
             if (type is "BODY" or "HEADER" && schema.ParameterCount != count)
                 throw new InboxException("template_invalid", $"The template requires {schema.ParameterCount} {type} parameter(s) but {count} were supplied.", 422);
         }
-    }
-
-    private CredentialProtector BuildProtector()
-    {
-        var active = Convert.FromBase64String(configuration["Credentials:MasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_MASTER_KEY") ?? throw new InvalidOperationException("Credentials:MasterKey is required."));
-        var previousRaw = configuration["Credentials:PreviousMasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_PREVIOUS_MASTER_KEY");
-        return new CredentialProtector(active, string.IsNullOrWhiteSpace(previousRaw) ? null : Convert.FromBase64String(previousRaw));
     }
 }

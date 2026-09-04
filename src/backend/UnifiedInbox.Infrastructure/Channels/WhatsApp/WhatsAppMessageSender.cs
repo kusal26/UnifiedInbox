@@ -75,8 +75,7 @@ public class WhatsAppMessageSender(HttpClient http, IConfiguration configuration
     private async Task<string> ResolveAccessTokenAsync(InboxDbContext db, Channel channel, CancellationToken token)
     {
         var credential = await db.ChannelCredentials.SingleAsync(x => x.ChannelId == channel.Id, token);
-        var key = Convert.FromBase64String(configuration["Credentials:MasterKey"] ?? throw new InvalidOperationException("Credentials:MasterKey is required."));
-        return new CredentialProtector(key).Unprotect(credential.EncryptedAccessToken);
+        return CredentialProtector.FromConfiguration(configuration).Unprotect(credential.EncryptedAccessToken);
     }
 
     private async Task<string> PostMessageAsync(string accessToken, string phoneNumberId, WhatsAppSendPayload payload, CancellationToken token)

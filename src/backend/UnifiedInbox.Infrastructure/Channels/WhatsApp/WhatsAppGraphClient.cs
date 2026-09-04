@@ -36,13 +36,21 @@ public sealed class WhatsAppGraphClient(HttpClient http, IConfiguration configur
             root.TryGetProperty("code_verification_status", out var status) ? status.GetString() ?? "" : "");
     }
 
-    public async Task<string> GetBusinessNameAsync(string businessId, string accessToken, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<GraphPhoneNumber>> GetPhoneNumbersAsync(string businessId, string accessToken, CancellationToken cancellationToken)
     {
-        using var request = GraphGet($"{businessId}?fields=id,name", accessToken);
+        using var request = GraphGet($"{businessId}/phone_numbers?fields=id,display_phone_number,code_verification_status,quality_rating", accessToken);
         using var response = await http.SendAsync(request, cancellationToken);
-        await EnsureGraphSuccess(response, "business lookup", cancellationToken);
+        await EnsureGraphSuccess(response, "WABA phone-number lookup", cancellationToken);
         using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(cancellationToken));
-        return body.RootElement.TryGetProperty("name", out var name) ? name.GetString() ?? businessId : businessId;
+        if (!body.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return [];
+        var phones = new List<GraphPhoneNumber>();
+        foreach (var item in data.EnumerateArray())
+        {
+            var id = Property(item, "id");
+            if (id.Length == 0) continue;
+            phones.Add(new GraphPhoneNumber(id, Property(item, "display_phone_number"), Property(item, "code_verification_status")));
+        }
+        return phones;
     }
 
     public async Task<IReadOnlyList<string>> GetTokenScopesAsync(string accessToken, CancellationToken cancellationToken)

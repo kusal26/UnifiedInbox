@@ -14,17 +14,30 @@ public sealed class AuthController(IAuthService auth) : ControllerBase
         return Accepted(new { message = "Workspace created. Check your email to verify your account before logging in." });
     }
     [AllowAnonymous, HttpPost("login")]
-    public async Task<IActionResult> Login(LoginRequest request, CancellationToken token) { var result = await auth.LoginAsync(request.TenantSlug, request.Email, request.Password, token); if (result is null) return Unauthorized(Problem(title: "Invalid credentials", statusCode: StatusCodes.Status401Unauthorized)); SetRefreshCookie(result.RefreshToken, DateTimeOffset.UtcNow.AddDays(30)); return Ok(new { result.AccessToken, result.AccessTokenExpiresAt }); }
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken token)
+    {
+        var result = await auth.LoginAsync(request.TenantSlug, request.Email, request.Password, token);
+        if (result is null) throw new InboxException("invalid_credentials", "Invalid email or password.", 401);
+        SetRefreshCookie(result.RefreshToken, DateTimeOffset.UtcNow.AddDays(30));
+        return Ok(new { result.AccessToken, result.AccessTokenExpiresAt });
+    }
     [AllowAnonymous, HttpPost("verify-email")]
-    public async Task<IActionResult> VerifyEmail(VerifyEmailRequest request, CancellationToken token) => await auth.VerifyEmailAsync(request.Token, token) ? Ok(new { verified = true }) : BadRequest(Problem(title: "Invalid or expired verification token", statusCode: 400));
+    public async Task<IActionResult> VerifyEmail(VerifyEmailRequest request, CancellationToken token) => await auth.VerifyEmailAsync(request.Token, token) ? Ok(new { verified = true }) : throw new InboxException("invalid_token", "Invalid or expired verification token.", 400);
     [AllowAnonymous, HttpPost("resend-verification")]
     public async Task<IActionResult> ResendVerification(ResendVerificationRequest request, CancellationToken token) { await auth.ResendVerificationAsync(request.Email, token); return Accepted(new { message = "If the account exists, a new verification email was sent." }); }
     [AllowAnonymous, HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest request, CancellationToken token) { await auth.ForgotPasswordAsync(request.Email, token); return Accepted(new { message = "If the account exists, a password reset email was sent." }); }
     [AllowAnonymous, HttpPost("reset-password")]
-    public async Task<IActionResult> ResetPassword(ResetPasswordRequest request, CancellationToken token) => await auth.ResetPasswordAsync(request.Token, request.NewPassword, token) ? Ok(new { reset = true }) : BadRequest(Problem(title: "Invalid or expired reset token", statusCode: 400));
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest request, CancellationToken token) => await auth.ResetPasswordAsync(request.Token, request.NewPassword, token) ? Ok(new { reset = true }) : throw new InboxException("invalid_token", "Invalid or expired reset token.", 400);
     [AllowAnonymous, HttpPost("refresh")]
-    public async Task<IActionResult> Refresh(CancellationToken token) { if (!Request.Cookies.TryGetValue("refresh_token", out var value)) return Unauthorized(); var result = await auth.RefreshAsync(value, token); if (result is null) { Response.Cookies.Delete("refresh_token"); return Unauthorized(); } SetRefreshCookie(result.RefreshToken, DateTimeOffset.UtcNow.AddDays(30)); return Ok(new { result.AccessToken, result.AccessTokenExpiresAt }); }
+    public async Task<IActionResult> Refresh(CancellationToken token)
+    {
+        if (!Request.Cookies.TryGetValue("refresh_token", out var value)) throw new InboxException("missing_token", "A refresh token is required.", 401);
+        var result = await auth.RefreshAsync(value, token);
+        if (result is null) { Response.Cookies.Delete("refresh_token"); throw new InboxException("invalid_token", "The refresh token is invalid or expired.", 401); }
+        SetRefreshCookie(result.RefreshToken, DateTimeOffset.UtcNow.AddDays(30));
+        return Ok(new { result.AccessToken, result.AccessTokenExpiresAt });
+    }
     [AllowAnonymous, HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken token) { if (Request.Cookies.TryGetValue("refresh_token", out var value)) await auth.RevokeAsync(value, token); Response.Cookies.Delete("refresh_token"); return NoContent(); }
     [Authorize, HttpGet("me")]

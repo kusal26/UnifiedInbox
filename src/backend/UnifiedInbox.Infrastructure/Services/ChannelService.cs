@@ -21,14 +21,21 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
         return await CreateAttemptAsync(actor, null, ConnectionAttemptPurpose.Connect, cancellationToken);
     }
 
-    public async Task<ChannelSummary> CompleteConnectAsync(string state, string code, string phoneNumberId, string businessId, string displayName, CancellationToken cancellationToken)
+    public async Task<ChannelSummary> CompleteConnectAsync(string state, string nonce, string code, string phoneNumberId, string businessId, string displayName, CancellationToken cancellationToken)
     {
         var actor = await MembershipGuard.RequireRoleAsync(db, current, UserRole.Admin, cancellationToken);
-        if (string.IsNullOrWhiteSpace(state) || string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(phoneNumberId) || string.IsNullOrWhiteSpace(businessId))
+        if (string.IsNullOrWhiteSpace(state) || string.IsNullOrWhiteSpace(nonce) || string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(phoneNumberId) || string.IsNullOrWhiteSpace(businessId))
             throw new ArgumentException("The signup handshake is incomplete.");
-        var attempt = await db.ConnectionAttempts.SingleOrDefaultAsync(x => x.StateHash == Hash(state.Trim()), cancellationToken);
+        var attempt = await db.ConnectionAttempts.SingleOrDefaultAsync(x => x.StateHash == Hash(state.Trim()) && x.NonceHash == Hash(nonce.Trim()), cancellationToken);
         if (attempt is null || attempt.TenantId != actor.TenantId || attempt.InitiatingUserId != actor.Id || attempt.ConsumedAt is not null || attempt.ExpiresAt <= DateTimeOffset.UtcNow)
             throw new InboxException("invalid_state", "The connection attempt is unknown, expired, or already used.", 400);
+        // A reauthorization attempt is bound to one channel: it may only complete for that channel's number.
+        if (attempt.ChannelId is { } boundChannelId)
+        {
+            var bound = await db.Channels.SingleOrDefaultAsync(x => x.Id == boundChannelId && x.ExternalAccountId == phoneNumberId.Trim(), cancellationToken);
+            if (bound is null)
+                throw new InboxException("invalid_state", "The connection attempt is bound to a different channel.", 400);
+        }
         attempt.ConsumedAt = DateTimeOffset.UtcNow; // single-use even when the provider rejects us
         await db.SaveChangesAsync(cancellationToken);
 
@@ -41,10 +48,16 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
             await AuditAsync(actor, "channel.connect.scopes_missing", attempt.Id, cancellationToken);
             throw new InboxException("scopes_missing", $"The signup did not grant: {string.Join(", ", missing)}.", 422);
         }
-        var phone = await graph.GetPhoneNumberAsync(phoneNumberId.Trim(), accessToken, cancellationToken);
+
+        // Prove WABA ownership: the signup-returned phone id must be part of the granted WABA's
+        // phone-number collection, present and verified, before we subscribe or persist anything.
+        var phones = await graph.GetPhoneNumbersAsync(businessId.Trim(), accessToken, cancellationToken);
+        var phone = phones.FirstOrDefault(x => string.Equals(x.Id, phoneNumberId.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (phone is null)
+            throw new InboxException("phone_not_in_business", "The phone number is not part of the WhatsApp Business Account granted by the signup.", 422);
         if (!string.Equals(phone.VerificationStatus, "VERIFIED", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(phone.DisplayPhoneNumber))
             throw new InboxException("phone_not_verified", "The phone number is not verified for WhatsApp messaging.", 422);
-        await graph.GetBusinessNameAsync(businessId.Trim(), accessToken, cancellationToken);
+
         try
         {
             // Subscribe the WABA webhook before the channel is marked connected.
@@ -59,7 +72,7 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
 
         var existingRoute = await db.ProviderRoutes.SingleOrDefaultAsync(x => x.Provider == "whatsapp" && x.ProviderAssetId == phoneNumberId.Trim(), cancellationToken);
         if (existingRoute is not null && existingRoute.TenantId != actor.TenantId)
-            throw new InboxException("number_in_use", "This phone number is already connected to another workspace.", 409);
+            throw new InboxException("asset_already_connected", "This phone number is already connected to another workspace.", 409);
         var channel = await db.Channels.SingleOrDefaultAsync(x => x.Platform == "whatsapp" && x.ExternalAccountId == phoneNumberId.Trim(), cancellationToken);
         if (channel is null)
         {
@@ -74,10 +87,16 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
             channel.Status = "connected";
         }
         channel.ExternalBusinessId = businessId.Trim();
-        var protector = BuildProtector();
+        var protector = CredentialProtector.FromConfiguration(configuration);
         var credential = await db.ChannelCredentials.SingleOrDefaultAsync(x => x.ChannelId == channel.Id, cancellationToken);
-        if (credential is null) db.ChannelCredentials.Add(new ChannelCredential { TenantId = actor.TenantId, ChannelId = channel.Id, EncryptedAccessToken = protector.Protect(accessToken) });
-        else { credential.EncryptedAccessToken = protector.Protect(accessToken); credential.UpdatedAt = DateTimeOffset.UtcNow; }
+        var webhookSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)); // per-channel verify secret, sealed at rest
+        if (credential is null) db.ChannelCredentials.Add(new ChannelCredential { TenantId = actor.TenantId, ChannelId = channel.Id, EncryptedAccessToken = protector.Protect(accessToken), EncryptedWebhookSecret = protector.Protect(webhookSecret) });
+        else
+        {
+            credential.EncryptedAccessToken = protector.Protect(accessToken);
+            credential.EncryptedWebhookSecret = protector.Protect(webhookSecret);
+            credential.UpdatedAt = DateTimeOffset.UtcNow;
+        }
         if (existingRoute is null) db.ProviderRoutes.Add(new ProviderRoute { Provider = "whatsapp", ProviderAssetId = phoneNumberId.Trim(), TenantId = actor.TenantId, ChannelId = channel.Id });
         else existingRoute.ChannelId = channel.Id;
         db.ChannelHealth.Add(new ChannelHealth { TenantId = actor.TenantId, ChannelId = channel.Id, IsHealthy = true, Reason = "connected" });
@@ -105,7 +124,7 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
             return new(false, "No credential is stored for this channel. Reauthorize to continue.");
         }
         string accessToken;
-        try { accessToken = BuildProtector().Unprotect(credential.EncryptedAccessToken); }
+        try { accessToken = CredentialProtector.FromConfiguration(configuration).Unprotect(credential.EncryptedAccessToken); }
         catch (CryptographicException)
         {
             RecordHealth(channel, false, "credential_undecryptable");
@@ -164,11 +183,12 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
         {
             try
             {
-                var accessToken = BuildProtector().Unprotect(credential.EncryptedAccessToken);
+                // Revoke provider access where Graph supports it (WABA webhook subscription removal).
+                var accessToken = CredentialProtector.FromConfiguration(configuration).Unprotect(credential.EncryptedAccessToken);
                 await graph.UnsubscribeAppAsync(channel.ExternalBusinessId, accessToken, cancellationToken);
             }
             catch (Exception) { /* best effort: local teardown continues regardless */ }
-            db.ChannelCredentials.Remove(credential); // ciphertext is destroyed; history is retained
+            db.ChannelCredentials.Remove(credential); // access-token and webhook-secret ciphertext are destroyed; history is retained
         }
         else if (credential is not null) db.ChannelCredentials.Remove(credential);
         var routes = await db.ProviderRoutes.Where(x => x.ChannelId == channel.Id).ToListAsync(cancellationToken);
@@ -185,7 +205,7 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
     public async Task<int> RotateCredentialsAsync(CancellationToken cancellationToken)
     {
         var actor = await MembershipGuard.RequireRoleAsync(db, current, UserRole.Owner, cancellationToken);
-        var protector = BuildProtector();
+        var protector = CredentialProtector.FromConfiguration(configuration);
         var credentials = await db.ChannelCredentials.ToListAsync(cancellationToken);
         var rotated = 0;
         var failures = new List<Guid>();
@@ -193,8 +213,14 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
         {
             try
             {
-                var plaintext = protector.Unprotect(credential.EncryptedAccessToken);
-                credential.EncryptedAccessToken = protector.Protect(plaintext);
+                // Re-seal only envelopes still under the previous key, leaving current ones untouched.
+                var tokenNeedsRotation = protector.NeedsRotation(credential.EncryptedAccessToken);
+                var secretNeedsRotation = !string.IsNullOrWhiteSpace(credential.EncryptedWebhookSecret) && protector.NeedsRotation(credential.EncryptedWebhookSecret);
+                if (!tokenNeedsRotation && !secretNeedsRotation) continue;
+                var accessToken = protector.Unprotect(credential.EncryptedAccessToken);
+                var webhookSecret = string.IsNullOrWhiteSpace(credential.EncryptedWebhookSecret) ? "" : protector.Unprotect(credential.EncryptedWebhookSecret);
+                credential.EncryptedAccessToken = protector.Protect(accessToken);
+                if (webhookSecret.Length > 0) credential.EncryptedWebhookSecret = protector.Protect(webhookSecret);
                 credential.KeyVersion++;
                 credential.UpdatedAt = DateTimeOffset.UtcNow;
                 rotated++;
@@ -208,20 +234,28 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
 
     private async Task<ConnectionAttemptInfo> CreateAttemptAsync(User actor, Guid? channelId, ConnectionAttemptPurpose purpose, CancellationToken cancellationToken)
     {
+        // Two independent handshake secrets are generated server-side; only their hashes are stored.
         var state = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var attempt = new ConnectionAttempt
         {
             TenantId = actor.TenantId,
             ChannelId = channelId,
             InitiatingUserId = actor.Id,
             StateHash = Hash(state),
+            NonceHash = Hash(nonce),
             Purpose = purpose,
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
         };
         db.ConnectionAttempts.Add(attempt);
         await db.SaveChangesAsync(cancellationToken);
-        return new(attempt.Id, state, attempt.ExpiresAt);
+        return new(attempt.Id, state, nonce, MetaAppId(), ConfigurationId(), GraphVersion(), EmbeddedSignupVersion(), attempt.ExpiresAt);
     }
+
+    private string MetaAppId() => configuration["WhatsApp:AppId"] ?? Environment.GetEnvironmentVariable("WHATSAPP_APP_ID") ?? "";
+    private string ConfigurationId() => configuration["WhatsApp:EmbeddedSignupConfigId"] ?? Environment.GetEnvironmentVariable("WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID") ?? "";
+    private string GraphVersion() => configuration["WhatsApp:GraphVersion"] ?? Environment.GetEnvironmentVariable("WHATSAPP_GRAPH_VERSION") ?? "v23.0";
+    private string EmbeddedSignupVersion() => configuration["WhatsApp:EmbeddedSignupVersion"] ?? Environment.GetEnvironmentVariable("WHATSAPP_EMBEDDED_SIGNUP_VERSION") ?? "v4";
 
     private void RecordHealth(Channel channel, bool healthy, string reason)
     {
@@ -245,15 +279,9 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
     private void Emit(Guid tenantId, string type, Guid id) =>
         db.Outbox.Add(new OutboxEvent(Guid.NewGuid(), tenantId, type, JsonSerializer.Serialize(new { id }), DateTimeOffset.UtcNow));
 
-    private CredentialProtector BuildProtector()
-    {
-        var active = Convert.FromBase64String(configuration["Credentials:MasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_MASTER_KEY") ?? throw new InvalidOperationException("Credentials:MasterKey is required."));
-        var previousRaw = configuration["Credentials:PreviousMasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_PREVIOUS_MASTER_KEY");
-        return new CredentialProtector(active, string.IsNullOrWhiteSpace(previousRaw) ? null : Convert.FromBase64String(previousRaw));
-    }
-
     private static ChannelSummary ToSummary(Channel channel) =>
         new(channel.Id, channel.DisplayName, channel.Platform, channel.ExternalAccountId, channel.IsHealthy, channel.IsEnabled, channel.Status, channel.LastWebhookAt, channel.LastOutboundAt);
 
-    /// <summary>Hash helper for connection states (the raw state never touches the database).</summary>
-    public static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));}
+    /// <summary>Hash helper for connection states and nonces (the raw values never touch the database).</summary>
+    public static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+}

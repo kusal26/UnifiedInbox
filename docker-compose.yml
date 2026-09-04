@@ -46,6 +46,9 @@ services:
       Jwt__Audience: unified-inbox-web
       Jwt__SigningKey: ${JWT_SIGNING_KEY}
       Credentials__MasterKey: ${CREDENTIAL_MASTER_KEY}
+      WhatsApp__AppId: ${WHATSAPP_APP_ID:-}
+      WhatsApp__EmbeddedSignupConfigId: ${WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID:-}
+      WhatsApp__EmbeddedSignupVersion: ${WHATSAPP_EMBEDDED_SIGNUP_VERSION:-v4}
       WhatsApp__AppSecret: ${WHATSAPP_APP_SECRET:-}
       WhatsApp__VerifyToken: ${WHATSAPP_VERIFY_TOKEN:-development-verify-token}
       Storage__Endpoint: http://minio:9000
@@ -67,7 +70,12 @@ services:
       ConnectionStrings__Database: Host=postgres;Database=unified_inbox;Username=app_runtime;Password=${APP_DB_PASSWORD:-local_only_app_password}
       RabbitMq__Connection: amqp://guest:guest@rabbitmq:5672/
       Credentials__MasterKey: ${CREDENTIAL_MASTER_KEY}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY}
       WhatsApp__UseFake: ${WHATSAPP_USE_FAKE:-true}
+      WhatsApp__AppId: ${WHATSAPP_APP_ID:-}
+      WhatsApp__EmbeddedSignupConfigId: ${WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID:-}
+      WhatsApp__AppSecret: ${WHATSAPP_APP_SECRET:-}
+      WhatsApp__VerifyToken: ${WHATSAPP_VERIFY_TOKEN:-development-verify-token}
       Storage__Endpoint: http://minio:9000
       Storage__Bucket: ${STORAGE_BUCKET:-attachments}
       Storage__AccessKey: ${MINIO_ACCESS_KEY:-minioadmin}

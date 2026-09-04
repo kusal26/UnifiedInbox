@@ -40,8 +40,9 @@ public sealed class ChannelHealth : ITenantScoped
 public enum ConnectionAttemptPurpose { Connect, Reauthorize }
 
 /// <summary>
-/// Single-use Embedded Signup handshake. Only the hash is stored; the raw state lives
-/// ~10 minutes in the browser flow and is bound to the initiating user.
+/// Single-use Embedded Signup handshake. Only hashes of the independent <c>state</c> and
+/// <c>nonce</c> values are stored; the raw values live ~10 minutes in the browser flow and are
+/// bound to the initiating tenant, user, purpose, and (for reauthorization) channel.
 /// </summary>
 public sealed class ConnectionAttempt : ITenantScoped
 {
@@ -50,6 +51,7 @@ public sealed class ConnectionAttempt : ITenantScoped
     public Guid? ChannelId { get; set; }
     public Guid InitiatingUserId { get; set; }
     public string StateHash { get; set; } = "";
+    public string NonceHash { get; set; } = "";
     public ConnectionAttemptPurpose Purpose { get; set; } = ConnectionAttemptPurpose.Connect;
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? ConsumedAt { get; set; }

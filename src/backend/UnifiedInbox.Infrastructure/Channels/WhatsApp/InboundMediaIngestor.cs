@@ -97,10 +97,7 @@ public sealed class InboundMediaIngestor(
     {
         var credential = await db.ChannelCredentials.SingleOrDefaultAsync(x => x.ChannelId == channel.Id, token)
             ?? throw new InboxException("channel_authorization_expired", "The channel has no stored credential. Reauthorize to continue.", 502);
-        var active = Convert.FromBase64String(configuration["Credentials:MasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_MASTER_KEY") ?? throw new InvalidOperationException("Credentials:MasterKey is required."));
-        var previousRaw = configuration["Credentials:PreviousMasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_PREVIOUS_MASTER_KEY");
-        var protector = new CredentialProtector(active, string.IsNullOrWhiteSpace(previousRaw) ? null : Convert.FromBase64String(previousRaw));
-        try { return protector.Unprotect(credential.EncryptedAccessToken); }
+        try { return CredentialProtector.FromConfiguration(configuration).Unprotect(credential.EncryptedAccessToken); }
         catch (System.Security.Cryptography.CryptographicException) { throw new InboxException("channel_authorization_expired", "The stored credential cannot be decrypted. Reauthorize to continue.", 502); }
     }
 

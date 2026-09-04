@@ -1,6 +1,7 @@
 using System.Text;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -13,6 +14,7 @@ using UnifiedInbox.Application;
 using UnifiedInbox.Application.Tenancy;
 using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Channels.WhatsApp;
+using UnifiedInbox.Infrastructure.Configuration;
 using UnifiedInbox.Infrastructure.Persistence;
 using UnifiedInbox.Infrastructure.Services;
 using UnifiedInbox.Infrastructure.Storage;
@@ -24,7 +26,19 @@ builder.Configuration["Jwt:SigningKey"] = signingKey;
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<UnifiedInbox.Api.ProblemExceptionHandler>();
-builder.Services.AddControllers();
+builder.Services.AddControllers().ConfigureApiBehaviorOptions(options => options.InvalidModelStateResponseFactory = context =>
+{
+    // Automatic 400s for malformed/missing request bodies are RFC 7807 errors too: give them a
+    // stable code and trace id so clients never see a body without correlation.
+    var problem = new Microsoft.AspNetCore.Mvc.ValidationProblemDetails(context.ModelState)
+    {
+        Status = StatusCodes.Status400BadRequest,
+        Title = "Invalid request",
+        Type = "https://unifiedinbox.app/problems/invalid_request",
+        Extensions = { ["traceId"] = context.HttpContext.TraceIdentifier, ["code"] = "invalid_request" },
+    };
+    return new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(problem);
+});
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentTenant, CurrentRequestContext>();
 builder.Services.AddDbContext<InboxDbContext>(options => options.UseNpgsql(connectionString));
@@ -51,6 +65,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.Events = new JwtBearerEvents { OnMessageReceived = context => { if (context.Request.Path.StartsWithSegments("/hubs/inbox") && context.Request.Query.TryGetValue("access_token", out var token)) context.Token = token; return Task.CompletedTask; } };
 });
 builder.Services.AddAuthorizationBuilder().AddPolicy("Admin", policy => policy.RequireRole(nameof(UserRole.Owner), nameof(UserRole.Admin))).AddPolicy("Owner", policy => policy.RequireRole(nameof(UserRole.Owner)));
+builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AuthorizationAuditHandler>();
 var signalR = builder.Services.AddSignalR();
 var redis = builder.Configuration["Redis:Connection"] ?? Environment.GetEnvironmentVariable("REDIS_CONNECTION"); if (!string.IsNullOrWhiteSpace(redis)) signalR.AddStackExchangeRedis(redis);
 var rabbit = builder.Configuration["RabbitMq:Connection"] ?? Environment.GetEnvironmentVariable("RABBITMQ_CONNECTION");
@@ -85,27 +100,12 @@ if (args.Contains("--migrate") || Environment.GetEnvironmentVariable("RUN_MIGRAT
         await DevelopmentSeeder.SeedAsync(db, scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>());
     return;
 }
-RejectUnsafeProductionConfiguration(app);
+ProductionGuard.Validate(app.Configuration, app.Environment.IsProduction());
 if (app.Environment.IsDevelopment() && Environment.GetEnvironmentVariable("SEED_DEVELOPMENT") == "true")
 {
     await using var scope = app.Services.CreateAsyncScope();
     await DevelopmentSeeder.SeedAsync(scope.ServiceProvider.GetRequiredService<InboxDbContext>(), scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>());
 }
 app.Run();
-
-static void RejectUnsafeProductionConfiguration(WebApplication app)
-{
-    if (!app.Environment.IsProduction()) return;
-    var config = app.Configuration;
-    var fake = (config["WhatsApp:UseFake"] ?? Environment.GetEnvironmentVariable("WHATSAPP_USE_FAKE"))?.ToLowerInvariant();
-    if (fake == "true") throw new InvalidOperationException("Fake WhatsApp provider mode is forbidden in Production.");
-    if (string.IsNullOrWhiteSpace(config["WhatsApp:AppSecret"] ?? Environment.GetEnvironmentVariable("WHATSAPP_APP_SECRET"))) throw new InvalidOperationException("WhatsApp:AppSecret is required in Production.");
-    if (string.IsNullOrWhiteSpace(config["WhatsApp:VerifyToken"] ?? Environment.GetEnvironmentVariable("WHATSAPP_VERIFY_TOKEN"))) throw new InvalidOperationException("WhatsApp:VerifyToken is required in Production.");
-    var masterKey = config["Credentials:MasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_MASTER_KEY") ?? "";
-    try { if (Convert.FromBase64String(masterKey).Length != 32) throw new InvalidOperationException("Credentials:MasterKey must decode to exactly 32 bytes in Production."); }
-    catch (FormatException) { throw new InvalidOperationException("Credentials:MasterKey must be valid base64 in Production."); }
-    var jwt = config["Jwt:SigningKey"] ?? "";
-    if (jwt.Length < 32 || jwt == "development-only-signing-key-change-before-production") throw new InvalidOperationException("Jwt:SigningKey must be a production secret (32+ chars).");
-}
 
 public partial class Program { }

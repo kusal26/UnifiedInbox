@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Configuration;
 
 namespace UnifiedInbox.Infrastructure.Security;
 
@@ -7,6 +8,20 @@ public sealed class CredentialProtector
 {
     private readonly byte[] key;
     private readonly byte[]? previousKey;
+
+    /// <summary>
+    /// Builds a protector from configuration, honoring the standard environment fallbacks
+    /// (<c>Credentials:MasterKey</c> / <c>CREDENTIAL_MASTER_KEY</c> and <c>Credentials:PreviousMasterKey</c> /
+    /// <c>CREDENTIAL_PREVIOUS_MASTER_KEY</c>). The previous key enables reading envelopes that were
+    /// sealed before the latest master-key rotation.
+    /// </summary>
+    public static CredentialProtector FromConfiguration(IConfiguration configuration)
+    {
+        var active = Convert.FromBase64String(configuration["Credentials:MasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_MASTER_KEY") ?? throw new InvalidOperationException("Credentials:MasterKey is required."));
+        var previousRaw = configuration["Credentials:PreviousMasterKey"] ?? Environment.GetEnvironmentVariable("CREDENTIAL_PREVIOUS_MASTER_KEY");
+        return new CredentialProtector(active, string.IsNullOrWhiteSpace(previousRaw) ? null : Convert.FromBase64String(previousRaw));
+    }
+
     public CredentialProtector(byte[] key, byte[]? previousKey = null)
     {
         if (key.Length != 32) throw new ArgumentException("The credential master key must be 32 bytes.", nameof(key));
