@@ -103,6 +103,21 @@ public sealed class MessageDeliveryPartTests(MessageDeliveryPartFixture fixture)
     }
 
     [DockerFact]
+    public async Task Unapproved_template_outside_window_is_rejected_before_persistence()
+    {
+        var seed = await SeedConversationAsync(warmWindow: false);
+        await RunInScope(seed.TenantId, seed.UserId, async (db, actor, token) =>
+        {
+            var inbox = Inbox(db, actor, new FakeTemplateService(approve: false));
+            var failure = await Should.ThrowAsync<InboxException>(() => inbox.SendAsync(seed.ConversationId, new OutboundMessageCommand("", Guid.NewGuid().ToString("N"), Template: new OutboundTemplate("not_approved", "en_US")), token));
+            failure.Code.ShouldBe("template_invalid");
+        });
+        await using var owner = fixture.Context(fixture.OwnerConnection);
+        (await owner.Messages.IgnoreQueryFilters().AnyAsync(x => x.TenantId == seed.TenantId)).ShouldBeFalse();
+        (await owner.MessageDeliveryParts.IgnoreQueryFilters().AnyAsync(x => x.TenantId == seed.TenantId)).ShouldBeFalse();
+    }
+
+    [DockerFact]
     public async Task Body_plus_two_attachments_creates_three_ordered_parts()
     {
         var seed = await SeedConversationAsync(warmWindow: true);
@@ -391,8 +406,8 @@ public sealed class MessageDeliveryPartTests(MessageDeliveryPartFixture fixture)
         await new TenantExecutionScope(db).RunAsync(tenantId, token => body(db, actor, token), CancellationToken.None);
     }
 
-    private static PersistentInboxService Inbox(InboxDbContext db, TestActor actor) =>
-        new(db, actor, new AttachmentService(db, actor, new UnusedStorage(), new UnusedScanner(), new TestEnvironment()));
+    private static PersistentInboxService Inbox(InboxDbContext db, TestActor actor, IWhatsAppTemplateService? templates = null) =>
+        new(db, actor, new AttachmentService(db, actor, new UnusedStorage(), new UnusedScanner(), new TestEnvironment()), templates ?? new FakeTemplateService());
 
     private sealed record Seed(Guid TenantId, Guid UserId, Guid ChannelId, Guid ContactId, Guid ConversationId);
 
@@ -418,8 +433,14 @@ public sealed class MessageDeliveryPartTests(MessageDeliveryPartFixture fixture)
         }
     }
 
-    private sealed class TestEnvironment : IHostEnvironment
+    private sealed class FakeTemplateService(bool approve = true) : IWhatsAppTemplateService
     {
+        public Task<IReadOnlyList<WhatsAppTemplateInfo>> ApprovedAsync(Guid channelId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<WhatsAppTemplateInfo>>([]);
+        public Task ValidateAsync(Guid channelId, OutboundTemplate template, CancellationToken cancellationToken) =>
+            approve ? Task.CompletedTask : throw new InboxException("template_invalid", "The template is not approved.", 422);
+    }
+
+    private sealed class TestEnvironment : IHostEnvironment    {
         public string EnvironmentName { get; set; } = "Test";
         public string ApplicationName { get; set; } = "tests";
         public string ContentRootPath { get; set; } = "/";

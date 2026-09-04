@@ -1,9 +1,17 @@
 namespace UnifiedInbox.Application;
 
+using UnifiedInbox.Application.Messaging;
+
 public sealed record GraphPhoneNumber(string Id, string DisplayPhoneNumber, string VerificationStatus);
 public sealed record ChannelSummary(Guid Id, string DisplayName, string Platform, string ExternalAccountId, bool IsHealthy, bool IsEnabled, string Status, DateTimeOffset? LastWebhookAt, DateTimeOffset? LastOutboundAt);
 public sealed record ConnectionAttemptInfo(Guid AttemptId, string State, DateTimeOffset ExpiresAt);
 public sealed record ChannelTestResult(bool Healthy, string Detail);
+
+/// <summary>A sanitized approved-template shape. Never carries tokens or raw Graph responses.</summary>
+public sealed record WhatsAppTemplateInfo(string Name, string Language, string Category, string Status, IReadOnlyList<WhatsAppTemplateComponentInfo> Components);
+/// <summary>The provider component type (BODY/HEADER/FOOTER/BUTTONS) and the number of parameters
+/// the approved template requires for it (derived from placeholders/media format).</summary>
+public sealed record WhatsAppTemplateComponentInfo(string Type, int ParameterCount);
 
 /// <summary>Minimal Meta Graph API surface for WhatsApp onboarding. Implemented against the configured Graph version.</summary>
 public interface IWhatsAppGraphClient
@@ -15,6 +23,8 @@ public interface IWhatsAppGraphClient
     Task<IReadOnlyList<string>> GetTokenScopesAsync(string accessToken, CancellationToken cancellationToken);
     Task SubscribeAppAsync(string businessId, string accessToken, CancellationToken cancellationToken);
     Task UnsubscribeAppAsync(string businessId, string accessToken, CancellationToken cancellationToken);
+    /// <summary>Lists the WABA's message templates. The caller decides status filtering and sanitization.</summary>
+    Task<IReadOnlyList<WhatsAppTemplateInfo>> ListMessageTemplatesAsync(string businessId, string accessToken, CancellationToken cancellationToken);
 }
 
 public interface IChannelService
@@ -27,4 +37,14 @@ public interface IChannelService
     Task<ChannelSummary> SetEnabledAsync(Guid channelId, bool enabled, CancellationToken cancellationToken);
     Task DisconnectAsync(Guid channelId, CancellationToken cancellationToken);
     Task<int> RotateCredentialsAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>Approved-template catalog for a WhatsApp channel. Only sanitized, approved templates are
+/// ever surfaced, and send acceptance rejects unapproved or incorrectly parameterized templates.</summary>
+public interface IWhatsAppTemplateService
+{
+    Task<IReadOnlyList<WhatsAppTemplateInfo>> ApprovedAsync(Guid channelId, CancellationToken cancellationToken);
+    /// <summary>Throws <c>template_invalid</c> when the requested template is not approved for the
+    /// channel or its parameterization does not match the approved schema.</summary>
+    Task ValidateAsync(Guid channelId, OutboundTemplate template, CancellationToken cancellationToken);
 }

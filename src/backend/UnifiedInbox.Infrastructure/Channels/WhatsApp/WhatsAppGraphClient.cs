@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using UnifiedInbox.Application;
 
@@ -70,6 +71,48 @@ public sealed class WhatsAppGraphClient(HttpClient http, IConfiguration configur
         using var response = await http.SendAsync(request, cancellationToken);
         await EnsureGraphSuccess(response, "webhook unsubscription", cancellationToken);
     }
+
+    public async Task<IReadOnlyList<WhatsAppTemplateInfo>> ListMessageTemplatesAsync(string businessId, string accessToken, CancellationToken cancellationToken)
+    {
+        using var request = GraphGet($"{businessId}/message_templates?fields=name,language,status,category,components&status=APPROVED&limit=1000", accessToken);
+        using var response = await http.SendAsync(request, cancellationToken);
+        await EnsureGraphSuccess(response, "template lookup", cancellationToken);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(cancellationToken));
+        if (!body.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return [];
+        var templates = new List<WhatsAppTemplateInfo>();
+        foreach (var item in data.EnumerateArray())
+        {
+            var name = Property(item, "name");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            var components = new List<WhatsAppTemplateComponentInfo>();
+            if (item.TryGetProperty("components", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
+                foreach (var component in nodes.EnumerateArray())
+                {
+                    var type = Property(component, "type").ToUpperInvariant();
+                    if (type.Length == 0) continue;
+                    components.Add(new WhatsAppTemplateComponentInfo(type, ParameterCount(component, type)));
+                }
+            templates.Add(new WhatsAppTemplateInfo(name, Property(item, "language"), Property(item, "category"), Property(item, "status"), components));
+        }
+        return templates;
+    }
+
+    /// <summary>Number of parameters a component needs: body/header text placeholders, or a single
+    /// media parameter for a non-text header (image/video/document).</summary>
+    private static int ParameterCount(JsonElement component, string type)
+    {
+        if (type == "HEADER")
+        {
+            var format = Property(component, "format");
+            if (format.Length > 0 && !string.Equals(format, "TEXT", StringComparison.OrdinalIgnoreCase)) return 1;
+        }
+        if (type is not ("BODY" or "HEADER")) return 0;
+        var text = Property(component, "text");
+        return Regex.Matches(text, @"\{\{\s*\d+\s*\}\}").Count;
+    }
+
+    private static string Property(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
     private HttpRequestMessage GraphGet(string path, string accessToken)
     {

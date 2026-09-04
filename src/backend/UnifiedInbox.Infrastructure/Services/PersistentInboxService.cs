@@ -8,7 +8,7 @@ using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.Infrastructure.Services;
 
-public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant current, IAttachmentService attachments) : IInboxService
+public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant current, IAttachmentService attachments, IWhatsAppTemplateService templates) : IInboxService
 {
     public async Task<ConversationPage> ListAsync(string? search, ConversationStatus? status, string? channel, bool unreadOnly, string? cursor, int pageSize, CancellationToken cancellationToken)
     {
@@ -62,6 +62,8 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
         var decision = policy.Evaluate(conversation.LastCustomerMessageAt, DateTimeOffset.UtcNow, hasApprovedTemplate: command.Template is not null);
         if (decision == WhatsAppSendDecision.TemplateRequired)
             throw new InboxException("messaging_window_closed", "The 24-hour customer service window is closed. Send an approved template message.", 422);
+        if (command.Template is not null)
+            await templates.ValidateAsync(conversation.ChannelId, command.Template, token); // template_invalid on unapproved/mismatched
         var sequence = await NextSequence(id, token);
         var message = new Message { TenantId = conversation.TenantId, ChannelId = conversation.ChannelId, ConversationId = id, Direction = MessageDirection.Outbound, SenderUserId = userId, Body = BodyFor(command, hasAttachments), IdempotencyKey = command.IdempotencyKey, Status = MessageStatus.Pending, Sequence = sequence, NextAttemptAt = DateTimeOffset.UtcNow.AddMinutes(2) };
         db.Messages.Add(message);

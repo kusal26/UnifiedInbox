@@ -25,6 +25,7 @@ public static class OutboxRetryPolicy
     public static bool IsTransient(Exception exception) => exception switch
     {
         HttpRequestException http => http.StatusCode is null or (HttpStatusCode)429 or >= (HttpStatusCode)500,
+        InboxException inbox => (inbox.Code is "provider_rate_limited" or "provider_temporarily_unavailable") || inbox.StatusCode >= 500,
         TaskCanceledException => true,
         TimeoutException => true,
         _ => false,

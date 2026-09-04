@@ -23,6 +23,9 @@ public sealed class MessageDeliveryPart : ITenantScoped
     public string? TemplateComponentsJson { get; set; }
     /// <summary>Provider message id (for WhatsApp a wamid) returned when this part was accepted.</summary>
     public string? ExternalMessageId { get; set; }
+    /// <summary>Provider media id for media parts. Persisted on the delivery part (never on the
+    /// attachment DTO) so an interrupted media send can be retried without a re-upload.</summary>
+    public string? ProviderMediaId { get; set; }
     public MessageStatus Status { get; set; } = MessageStatus.Pending;
     public int Attempts { get; set; }
     public DateTimeOffset? NextAttemptAt { get; set; }

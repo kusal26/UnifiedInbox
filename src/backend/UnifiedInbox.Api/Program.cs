@@ -37,6 +37,7 @@ builder.Services.AddScoped<IAdministrationService, AdministrationService>();
 builder.Services.AddScoped<IInvitationService, InvitationService>();
 builder.Services.AddScoped<IChannelService, ChannelService>();
 builder.Services.AddHttpClient<IWhatsAppGraphClient, WhatsAppGraphClient>();
+builder.Services.AddScoped<IWhatsAppTemplateService, WhatsAppTemplateService>();
 builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IAttachmentService, AttachmentService>();
 builder.Services.AddSingleton<IObjectStorage, MinioObjectStorage>();

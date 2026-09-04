@@ -263,5 +263,6 @@ public sealed class ChannelServiceTests
             UnsubscribeCalls++;
             return Task.CompletedTask;
         }
+        public Task<IReadOnlyList<WhatsAppTemplateInfo>> ListMessageTemplatesAsync(string businessId, string accessToken, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<WhatsAppTemplateInfo>>([]);
     }
 }
