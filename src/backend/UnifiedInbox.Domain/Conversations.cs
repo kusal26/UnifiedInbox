@@ -52,6 +52,8 @@ public sealed class Message : ITenantScoped
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? ProviderTimestamp { get; set; }
     public long Sequence { get; set; }
+    /// <summary>The durable provider-send units for this timeline item; empty for legacy single-send rows.</summary>
+    public List<MessageDeliveryPart> DeliveryParts { get; set; } = [];
     /// <summary>Provider-send attempts. Retry timing lives in <see cref="NextAttemptAt"/>; ambiguous outcomes stop retrying.</summary>
     public int Attempts { get; set; }
     public DateTimeOffset? NextAttemptAt { get; set; }

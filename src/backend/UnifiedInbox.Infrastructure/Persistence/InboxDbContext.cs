@@ -14,6 +14,7 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<MessageDeliveryPart> MessageDeliveryParts => Set<MessageDeliveryPart>();
     public DbSet<InternalNote> InternalNotes => Set<InternalNote>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<Invitation> Invitations => Set<Invitation>();
@@ -35,7 +36,7 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         modelBuilder.Entity<Tenant>().HasKey(x => x.Id);
         modelBuilder.Entity<Tenant>().HasIndex(x => x.Slug).IsUnique();
         ConfigureTenant<User>(modelBuilder); ConfigureTenant<Channel>(modelBuilder); ConfigureTenant<ChannelCredential>(modelBuilder);
-        ConfigureTenant<Contact>(modelBuilder); ConfigureTenant<Conversation>(modelBuilder); ConfigureTenant<Message>(modelBuilder);
+        ConfigureTenant<Contact>(modelBuilder); ConfigureTenant<Conversation>(modelBuilder); ConfigureTenant<Message>(modelBuilder); ConfigureTenant<MessageDeliveryPart>(modelBuilder);
         ConfigureTenant<InternalNote>(modelBuilder); ConfigureTenant<RefreshToken>(modelBuilder); ConfigureTenant<Invitation>(modelBuilder);
         ConfigureTenant<Attachment>(modelBuilder); ConfigureTenant<CannedResponseEntity>(modelBuilder); ConfigureTenant<NotificationEntity>(modelBuilder);
         ConfigureTenant<NotificationPreference>(modelBuilder);
@@ -56,6 +57,8 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         modelBuilder.Entity<Message>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.SenderUserId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<InternalNote>().HasOne<Conversation>().WithMany().HasForeignKey(x => new { x.TenantId, x.ConversationId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<InternalNote>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.AuthorId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MessageDeliveryPart>().HasOne<Message>().WithMany(m => m.DeliveryParts).HasForeignKey(x => new { x.TenantId, x.MessageId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<MessageDeliveryPart>().HasOne<Attachment>().WithMany().HasForeignKey(x => new { x.TenantId, x.AttachmentId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ChannelCredential>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<ChannelHealth>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<Attachment>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.UploaderId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
@@ -75,6 +78,10 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         modelBuilder.Entity<Message>().HasIndex(x => new { x.TenantId, x.ChannelId, x.ExternalMessageId }).IsUnique().HasFilter("\"ExternalMessageId\" IS NOT NULL");
         modelBuilder.Entity<Message>().HasIndex(x => new { x.TenantId, x.ConversationId, x.IdempotencyKey }).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL");
         modelBuilder.Entity<Message>().Property(x => x.Version).IsRowVersion();
+        modelBuilder.Entity<MessageDeliveryPart>().Property(x => x.Version).IsRowVersion();
+        modelBuilder.Entity<MessageDeliveryPart>().HasIndex(x => new { x.TenantId, x.MessageId, x.Position }).IsUnique();
+        modelBuilder.Entity<MessageDeliveryPart>().HasIndex(x => new { x.TenantId, x.ProviderRequestId }).IsUnique().HasFilter("\"ProviderRequestId\" IS NOT NULL");
+        modelBuilder.Entity<MessageDeliveryPart>().HasIndex(x => new { x.TenantId, x.ExternalMessageId }).IsUnique().HasFilter("\"ExternalMessageId\" IS NOT NULL");
         modelBuilder.Entity<global::UnifiedInbox.Domain.WebhookReceipt>().Property(x => x.Version).IsRowVersion();
         modelBuilder.Entity<InternalNote>().HasIndex(x => new { x.TenantId, x.ConversationId, x.Sequence }).IsUnique();
         modelBuilder.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();

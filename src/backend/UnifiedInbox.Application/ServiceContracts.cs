@@ -1,3 +1,4 @@
+using UnifiedInbox.Application.Messaging;
 using UnifiedInbox.Domain;
 
 namespace UnifiedInbox.Application;
@@ -49,7 +50,7 @@ public interface IInboxService
     Task<ConversationDetails?> GetAsync(Guid id, CancellationToken cancellationToken);
     Task<ActivityResponse?> ActivityAsync(Guid id, long? before, int pageSize, CancellationToken cancellationToken);
     Task<ActivityItem?> AddNoteAsync(Guid id, string body, CancellationToken cancellationToken);
-    Task<ActivityItem?> SendAsync(Guid id, string body, string idempotencyKey, string? templateName, IReadOnlyList<Guid>? attachmentIds, CancellationToken cancellationToken);
+    Task<ActivityItem?> SendAsync(Guid id, OutboundMessageCommand command, CancellationToken cancellationToken);
     Task<ConversationSummary?> SetStatusAsync(Guid id, ConversationStatus status, CancellationToken cancellationToken);
     Task<ConversationSummary?> MarkReadAsync(Guid id, long throughSequence, CancellationToken cancellationToken);
     Task<bool> UpdateCustomerNotesAsync(Guid id, string? notes, CancellationToken cancellationToken);

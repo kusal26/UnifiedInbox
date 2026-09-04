@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using UnifiedInbox.Application;
+using UnifiedInbox.Application.Messaging;
 using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Persistence;
 
@@ -46,44 +47,61 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
         return new(ActivityKind.InternalNote, note.Id, id, note.Body, note.CreatedAt, sequence, userId, null);
     }
 
-    public async Task<ActivityItem?> SendAsync(Guid id, string body, string idempotencyKey, string? templateName, IReadOnlyList<Guid>? attachmentIds, CancellationToken cancellationToken)
+    public async Task<ActivityItem?> SendAsync(Guid id, OutboundMessageCommand command, CancellationToken token)
     {
-        await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, cancellationToken);
-        var conversation = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (conversation is null || current.UserId is not { } userId) return null;
-        var existing = await db.Messages.SingleOrDefaultAsync(x => x.ConversationId == id && x.IdempotencyKey == idempotencyKey, cancellationToken);
+        await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, token);
+        var conversation = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, token); if (conversation is null || current.UserId is not { } userId) return null;
+        var existing = await db.Messages.SingleOrDefaultAsync(x => x.ConversationId == id && x.IdempotencyKey == command.IdempotencyKey, token);
         if (existing is not null) return ToActivity(existing);
-        // 24-hour customer-service window enforced before accepting free-form sends.
+        var hasAttachments = command.AttachmentIds is { Count: > 0 };
+        if (command.Template is not null && hasAttachments)
+            throw new InboxException("template_invalid", "An approved template cannot be combined with attachments.", 422);
+        // 24-hour customer-service window enforced before accepting free-form sends. A template
+        // request is a structured identity, never proof of approval on a name alone.
         var policy = new WhatsAppMessagingPolicy();
-        var decision = policy.Evaluate(conversation.LastCustomerMessageAt, DateTimeOffset.UtcNow, hasApprovedTemplate: !string.IsNullOrWhiteSpace(templateName));
+        var decision = policy.Evaluate(conversation.LastCustomerMessageAt, DateTimeOffset.UtcNow, hasApprovedTemplate: command.Template is not null);
         if (decision == WhatsAppSendDecision.TemplateRequired)
             throw new InboxException("messaging_window_closed", "The 24-hour customer service window is closed. Send an approved template message.", 422);
-        var sequence = await NextSequence(id, cancellationToken); var message = new Message { TenantId = conversation.TenantId, ChannelId = conversation.ChannelId, ConversationId = id, Direction = MessageDirection.Outbound, SenderUserId = userId, Body = RequireBody(body), IdempotencyKey = idempotencyKey, Status = MessageStatus.Pending, Sequence = sequence, NextAttemptAt = DateTimeOffset.UtcNow.AddMinutes(2) };
+        var sequence = await NextSequence(id, token);
+        var message = new Message { TenantId = conversation.TenantId, ChannelId = conversation.ChannelId, ConversationId = id, Direction = MessageDirection.Outbound, SenderUserId = userId, Body = BodyFor(command, hasAttachments), IdempotencyKey = command.IdempotencyKey, Status = MessageStatus.Pending, Sequence = sequence, NextAttemptAt = DateTimeOffset.UtcNow.AddMinutes(2) };
         db.Messages.Add(message);
         Touch(conversation); AddOutbox(conversation.TenantId, "outbound.message.requested", message.Id); AddOutbox(conversation.TenantId, "message.created", message.Id); AddOutbox(conversation.TenantId, "conversation.updated", conversation.Id);
 
-        if (attachmentIds is { Count: > 0 })
+        // The message must be durable before attachments (or their delivery parts) can reference
+        // it, and the claims must be atomic with it: a losing concurrent send must not leave a
+        // message that references attachments it does not own. Run inside a transaction (the
+        // ambient request-scope transaction when one is already open).
+        var ownsTransaction = db.Database.IsRelational() && db.Database.CurrentTransaction is null;
+        if (ownsTransaction) await db.Database.BeginTransactionAsync(token);
+        try
         {
-            // The message must be durable before attachments can reference it, and the claims
-            // must be atomic with it: a losing concurrent send must not leave a message that
-            // references attachments it does not own. Run inside a transaction (the ambient
-            // request-scope transaction when one is already open).
-            var ownsTransaction = db.Database.IsRelational() && db.Database.CurrentTransaction is null;
-            if (ownsTransaction) await db.Database.BeginTransactionAsync(cancellationToken);
-            try
+            await db.SaveChangesAsync(token);
+            var contentTypes = new Dictionary<Guid, string>();
+            if (hasAttachments)
             {
-                await db.SaveChangesAsync(cancellationToken);
-                await attachments.ClaimForMessageAsync(message.Id, attachmentIds, cancellationToken);
-                if (ownsTransaction) await db.Database.CommitTransactionAsync(cancellationToken);
+                await attachments.ClaimForMessageAsync(message.Id, command.AttachmentIds!, token);
+                contentTypes = await db.Attachments.Where(x => command.AttachmentIds!.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.DetectedContentType ?? x.ContentType, token);
             }
-            catch
+            var specs = OutboundMessagePlanner.Plan(command, contentTypes);
+            db.MessageDeliveryParts.AddRange(specs.Select((spec, index) => new MessageDeliveryPart
             {
-                if (ownsTransaction) await db.Database.RollbackTransactionAsync(cancellationToken);
-                throw;
-            }
+                TenantId = conversation.TenantId,
+                MessageId = message.Id,
+                Position = index,
+                Kind = spec.Kind,
+                AttachmentId = spec.AttachmentId,
+                TemplateName = spec.TemplateName,
+                TemplateLanguage = spec.TemplateLanguage,
+                TemplateComponentsJson = spec.TemplateComponentsJson,
+                Status = MessageStatus.Pending,
+            }));
+            await db.SaveChangesAsync(token);
+            if (ownsTransaction) await db.Database.CommitTransactionAsync(token);
         }
-        else
+        catch
         {
-            await db.SaveChangesAsync(cancellationToken);
+            if (ownsTransaction) await db.Database.RollbackTransactionAsync(token);
+            throw;
         }
         return ToActivity(message);
     }
@@ -95,6 +113,12 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
     private IQueryable<ConversationSummary> SummaryQuery() => db.Conversations.Select(c => new ConversationSummary(c.Id, db.Contacts.Where(p => p.Id == c.ContactId).Select(p => p.DisplayName).First(), db.Channels.Where(ch => ch.Id == c.ChannelId).Select(ch => ch.Platform).First(), db.Messages.Where(m => m.ConversationId == c.Id).OrderByDescending(m => m.Sequence).Select(m => m.Body).FirstOrDefault() ?? "", c.Status, db.Messages.Any(m => m.ConversationId == c.Id && m.Direction == MessageDirection.Inbound && m.Sequence > c.LastReadSequence), c.UpdatedAt));
     private async Task<long> NextSequence(Guid conversationId, CancellationToken token) { var messageMax = await db.Messages.Where(x => x.ConversationId == conversationId).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0; var noteMax = await db.InternalNotes.Where(x => x.ConversationId == conversationId).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0; return Math.Max(messageMax, noteMax) + 1; }
     private static string RequireBody(string body) => string.IsNullOrWhiteSpace(body) ? throw new ArgumentException("Body is required.") : body.Trim();
+    private static string BodyFor(OutboundMessageCommand command, bool hasAttachments)
+    {
+        var body = command.Body?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(body) && command.Template is null && !hasAttachments) throw new ArgumentException("Body is required.");
+        return body;
+    }
     private static void Touch(Conversation conversation) => conversation.UpdatedAt = DateTimeOffset.UtcNow;
     private void AddOutbox(Guid tenantId, string type, Guid id) => db.Outbox.Add(new OutboxEvent(Guid.NewGuid(), tenantId, type, JsonSerializer.Serialize(new { id }), DateTimeOffset.UtcNow));
     private async Task AuditAndSave(Guid tenantId, string action, Guid resource, CancellationToken token) { db.AuditEntries.Add(new AuditEntryEntity { TenantId = tenantId, ActorId = current.UserId, Action = action, Resource = resource.ToString() }); await db.SaveChangesAsync(token); }
