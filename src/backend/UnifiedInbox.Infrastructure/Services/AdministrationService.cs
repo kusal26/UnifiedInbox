@@ -30,7 +30,7 @@ public sealed class AdministrationService(InboxDbContext db, ICurrentTenant curr
     public async Task<User> SetUserActiveAsync(Guid userId, bool isActive, CancellationToken token)
     {
         var actor = await MembershipGuard.RequireRoleAsync(db, current, UserRole.Admin, token);
-        var user = await db.Users.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == userId && x.TenantId == actor.TenantId, token) ?? throw new InboxException("user_not_found", "The user was not found.", 404);
+        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == userId, token) ?? throw new InboxException("user_not_found", "The user was not found.", 404);
         if (user.Id == actor.Id) throw new InboxException("cannot_deactivate_self", "You cannot deactivate your own account.", 400);
         if (actor.Role == UserRole.Admin && user.Role != UserRole.Agent)
             throw new InboxException("user_lifecycle_forbidden", "Administrators can only change agent accounts.", 403);
@@ -160,15 +160,15 @@ public sealed class AdministrationService(InboxDbContext db, ICurrentTenant curr
     private static string Csv(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
 }
 
-public sealed class WebhookService(InboxDbContext db) : IWebhookService
+public sealed class WebhookService(InboxDbContext db, UnifiedInbox.Application.Tenancy.ITenantExecutionScope executionScope) : IWebhookService
 {
+    private UnifiedInbox.Application.Tenancy.ITenantExecutionScope Scope { get; } = executionScope;
+
     public async Task<bool> PersistAsync(Guid channelId, string providerEventId, byte[] rawBody, CancellationToken token)
     {
-        var channel = await db.Channels.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == channelId && x.IsEnabled, token); if (channel is null) return false;
-        if (await db.WebhookReceipts.IgnoreQueryFilters().AnyAsync(x => x.ChannelId == channelId && x.ProviderEventId == providerEventId, token)) return true;
-        var receipt = new global::UnifiedInbox.Domain.WebhookReceipt { TenantId = channel.TenantId, ChannelId = channelId, ProviderEventId = providerEventId, RawBody = rawBody };
-        db.WebhookReceipts.Add(receipt); db.Outbox.Add(new OutboxEvent(Guid.NewGuid(), channel.TenantId, "webhook.received", System.Text.Json.JsonSerializer.Serialize(new { receiptId = receipt.Id }), DateTimeOffset.UtcNow));
-        channel.LastWebhookAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(token); return true;
+        var route = await db.ProviderRoutes.AsNoTracking().SingleOrDefaultAsync(x => x.ChannelId == channelId, token);
+        if (route is null) return false;
+        return await PersistScopedAsync(route.TenantId, route.ChannelId, providerEventId, rawBody, token);
     }
 
     public async Task<bool> PersistByAssetAsync(string providerAssetId, string providerEventId, byte[] rawBody, CancellationToken token)
@@ -177,6 +177,15 @@ public sealed class WebhookService(InboxDbContext db) : IWebhookService
         // unscoped provider route table keyed by phone_number_id.
         var route = await db.ProviderRoutes.SingleOrDefaultAsync(x => x.Provider == "whatsapp" && x.ProviderAssetId == providerAssetId, token);
         if (route is null) return false;
-        return await PersistAsync(route.ChannelId, providerEventId, rawBody, token);
+        return await PersistScopedAsync(route.TenantId, route.ChannelId, providerEventId, rawBody, token);
     }
+
+    private Task<bool> PersistScopedAsync(Guid tenantId, Guid channelId, string providerEventId, byte[] rawBody, CancellationToken token) => Scope.RunAsync(tenantId, async scopedToken =>
+    {
+        var channel = await db.Channels.SingleOrDefaultAsync(x => x.Id == channelId && x.IsEnabled, scopedToken); if (channel is null) return false;
+        if (await db.WebhookReceipts.AnyAsync(x => x.ChannelId == channelId && x.ProviderEventId == providerEventId, scopedToken)) return true;
+        var receipt = new global::UnifiedInbox.Domain.WebhookReceipt { TenantId = tenantId, ChannelId = channelId, ProviderEventId = providerEventId, RawBody = rawBody };
+        db.WebhookReceipts.Add(receipt); db.Outbox.Add(new OutboxEvent(Guid.NewGuid(), tenantId, "webhook.received", System.Text.Json.JsonSerializer.Serialize(new { receiptId = receipt.Id }), DateTimeOffset.UtcNow));
+        channel.LastWebhookAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(scopedToken); return true;
+    }, token);
 }

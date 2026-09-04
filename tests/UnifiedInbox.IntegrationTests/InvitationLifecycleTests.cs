@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Shouldly;
 using UnifiedInbox.Application;
 using UnifiedInbox.Domain;
+using UnifiedInbox.Infrastructure.Persistence;
 using UnifiedInbox.Infrastructure.Services;
 
 namespace UnifiedInbox.IntegrationTests;
@@ -17,7 +18,7 @@ public sealed class InvitationLifecycleTests
         TestContexts.SeedTenant(db, tenantId);
         TestContexts.SeedUser(db, tenantId, ownerId, UserRole.Owner, "owner@example.com");
         var mail = new FakeMailSender();
-        var invitations = new InvitationService(db, new TestTenant(tenantId, ownerId, UserRole.Owner), new PasswordHasher<User>(), mail);
+        var invitations = new InvitationService(db, new TestTenant(tenantId, ownerId, UserRole.Owner), new PasswordHasher<User>(), mail, new TenantExecutionScope(db));
 
         var summary = await invitations.InviteAsync("agent@example.com", UserRole.Agent, CancellationToken.None);
         summary.Email.ShouldBe("agent@example.com");
@@ -28,7 +29,7 @@ public sealed class InvitationLifecycleTests
         accepted.ShouldBeTrue();
         (await invitations.ListAsync(CancellationToken.None)).ShouldBeEmpty();
 
-        var auth = new AuthenticationService(db, new PasswordHasher<User>(), new FakeTokenIssuer(), new TestTenant(tenantId, Guid.NewGuid()), mail);
+        var auth = new AuthenticationService(db, new PasswordHasher<User>(), new FakeTokenIssuer(), new TestTenant(tenantId, Guid.NewGuid()), mail, new TenantExecutionScope(db));
         var tokens = await auth.LoginAsync("acme", "agent@example.com", "supersecure-password-1", CancellationToken.None);
         tokens.ShouldNotBeNull();
     }
@@ -43,14 +44,14 @@ public sealed class InvitationLifecycleTests
         var (adminDb, _) = TestContexts.Create(tenantId, adminId, UserRole.Admin, dbName);
         TestContexts.SeedUser(adminDb, tenantId, adminId, UserRole.Admin, "admin@example.com");
         TestContexts.SeedUser(adminDb, tenantId, agentId, UserRole.Agent, "agent@example.com");
-        var adminInvites = new InvitationService(adminDb, new TestTenant(tenantId, adminId, UserRole.Admin), new PasswordHasher<User>(), new FakeMailSender());
+        var adminInvites = new InvitationService(adminDb, new TestTenant(tenantId, adminId, UserRole.Admin), new PasswordHasher<User>(), new FakeMailSender(), new TenantExecutionScope(adminDb));
 
         var forbidden = await Should.ThrowAsync<InboxException>(adminInvites.InviteAsync("owner@example.com", UserRole.Owner, CancellationToken.None));
         forbidden.StatusCode.ShouldBe(403);
         await adminInvites.InviteAsync("agent2@example.com", UserRole.Agent, CancellationToken.None);
 
         var (agentDb, _) = TestContexts.Create(tenantId, agentId, UserRole.Agent, dbName);
-        var agentInvites = new InvitationService(agentDb, new TestTenant(tenantId, agentId, UserRole.Agent), new PasswordHasher<User>(), new FakeMailSender());
+        var agentInvites = new InvitationService(agentDb, new TestTenant(tenantId, agentId, UserRole.Agent), new PasswordHasher<User>(), new FakeMailSender(), new TenantExecutionScope(agentDb));
         await Should.ThrowAsync<UnauthorizedAccessException>(agentInvites.InviteAsync("x@example.com", UserRole.Agent, CancellationToken.None));
     }
 
@@ -62,7 +63,7 @@ public sealed class InvitationLifecycleTests
         var (db, _) = TestContexts.Create(tenantId, ownerId, UserRole.Owner);
         TestContexts.SeedUser(db, tenantId, ownerId, UserRole.Owner, "owner@example.com");
         var mail = new FakeMailSender();
-        var invitations = new InvitationService(db, new TestTenant(tenantId, ownerId, UserRole.Owner), new PasswordHasher<User>(), mail);
+        var invitations = new InvitationService(db, new TestTenant(tenantId, ownerId, UserRole.Owner), new PasswordHasher<User>(), mail, new TenantExecutionScope(db));
 
         var first = await invitations.InviteAsync("one@example.com", UserRole.Agent, CancellationToken.None);
         var firstToken = mail.LastToken();
@@ -91,14 +92,14 @@ public sealed class InvitationLifecycleTests
         var (dbA, _) = TestContexts.Create(tenantA, ownerA, UserRole.Owner, dbName);
         TestContexts.SeedUser(dbA, tenantA, ownerA, UserRole.Owner, "owner-a@example.com");
         TestContexts.SeedUser(dbA, tenantB, ownerB, UserRole.Owner, "owner-b@example.com");
-        var invitesA = new InvitationService(dbA, new TestTenant(tenantA, ownerA, UserRole.Owner), new PasswordHasher<User>(), new FakeMailSender());
+        var invitesA = new InvitationService(dbA, new TestTenant(tenantA, ownerA, UserRole.Owner), new PasswordHasher<User>(), new FakeMailSender(), new TenantExecutionScope(dbA));
 
         var conflict = await Should.ThrowAsync<InboxException>(invitesA.InviteAsync("owner-a@example.com", UserRole.Agent, CancellationToken.None));
         conflict.Code.ShouldBe("already_member");
 
         var pending = await invitesA.InviteAsync("fresh@example.com", UserRole.Agent, CancellationToken.None);
         var (dbB, _) = TestContexts.Create(tenantB, ownerB, UserRole.Owner, dbName);
-        var invitesB = new InvitationService(dbB, new TestTenant(tenantB, ownerB, UserRole.Owner), new PasswordHasher<User>(), new FakeMailSender());
+        var invitesB = new InvitationService(dbB, new TestTenant(tenantB, ownerB, UserRole.Owner), new PasswordHasher<User>(), new FakeMailSender(), new TenantExecutionScope(dbB));
         (await invitesB.ListAsync(CancellationToken.None)).ShouldBeEmpty();
         (await invitesB.RevokeAsync(pending.Id, CancellationToken.None)).ShouldBeFalse();
     }
@@ -111,7 +112,7 @@ public sealed class InvitationLifecycleTests
         var (db, _) = TestContexts.Create(tenantId, ownerId, UserRole.Owner);
         TestContexts.SeedUser(db, tenantId, ownerId, UserRole.Owner, "owner@example.com");
         var mail = new FakeMailSender();
-        var invitations = new InvitationService(db, new TestTenant(tenantId, ownerId, UserRole.Owner), new PasswordHasher<User>(), mail);
+        var invitations = new InvitationService(db, new TestTenant(tenantId, ownerId, UserRole.Owner), new PasswordHasher<User>(), mail, new TenantExecutionScope(db));
 
         var invite = await invitations.InviteAsync("audit@example.com", UserRole.Agent, CancellationToken.None);
         await invitations.AcceptAsync(mail.LastToken(), "Audit", "supersecure-password-1", CancellationToken.None);

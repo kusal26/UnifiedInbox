@@ -7,6 +7,12 @@ using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.IntegrationTests;
 
+/// <summary>
+/// Proves tenant identity and invisibility through the <c>app_runtime</c> role against real
+/// Postgres: no ambient context reads nothing, a scoped transaction is confined to its tenant,
+/// committed writes are visible to later scopes (and to no other tenant), disposal resets the
+/// pooled connection, and cross-tenant writes/nesting are rejected.
+/// </summary>
 public sealed class TenantExecutionScopeTests : IAsyncLifetime
 {
     private readonly PostgreSqlContainer container = new PostgreSqlBuilder("postgres:18-alpine").Build();
@@ -39,25 +45,58 @@ public sealed class TenantExecutionScopeTests : IAsyncLifetime
     public async Task Runtime_role_without_context_reads_no_users()
     {
         await using var db = Context(RuntimeConnection());
+        (await db.Users.CountAsync()).ShouldBe(0);
         (await db.Users.IgnoreQueryFilters().CountAsync()).ShouldBe(0);
     }
 
     [DockerFact]
-    public async Task Tenant_scope_reads_only_selected_tenant_and_allows_its_writes()
+    public async Task Scope_reports_identity_and_reads_only_the_selected_tenant()
     {
         await using var db = Context(RuntimeConnection());
         var scope = new TenantExecutionScope(db);
+        scope.CurrentTenantId.ShouldBeNull();
 
         await scope.RunAsync(tenantA, async token =>
         {
+            scope.CurrentTenantId.ShouldBe(tenantA);
             (await db.Users.CountAsync(token)).ShouldBe(1);
             (await db.Users.IgnoreQueryFilters().CountAsync(token)).ShouldBe(1);
-            db.Users.Add(UserFor(tenantA, "second-a@example.com"));
-            await db.SaveChangesAsync(token);
         }, CancellationToken.None);
 
+        scope.CurrentTenantId.ShouldBeNull(); // cleared after the scope
         await scope.RunAsync(tenantB, async token =>
-            (await db.Users.CountAsync(token)).ShouldBe(1), CancellationToken.None);
+        {
+            scope.CurrentTenantId.ShouldBe(tenantB);
+            (await db.Users.CountAsync(token)).ShouldBe(1);
+            (await db.Users.IgnoreQueryFilters().CountAsync(token)).ShouldBe(1);
+        }, CancellationToken.None);
+    }
+
+    [DockerFact]
+    public async Task Committed_scope_write_is_read_back_by_a_fresh_connection_but_not_other_tenants()
+    {
+        var email = $"second-{Guid.NewGuid():N}@example.com";
+        await using (var db = Context(RuntimeConnection()))
+        {
+            var scope = new TenantExecutionScope(db);
+            await scope.RunAsync(tenantA, async token =>
+            {
+                db.Users.Add(UserFor(tenantA, email));
+                await db.SaveChangesAsync(token);
+            }, CancellationToken.None);
+        }
+
+        await using var fresh = Context(RuntimeConnection());
+        var second = new TenantExecutionScope(fresh);
+        await second.RunAsync(tenantA, async token =>
+        {
+            (await fresh.Users.IgnoreQueryFilters().CountAsync(token)).ShouldBe(2); // original + committed write
+            (await fresh.Users.AnyAsync(x => x.NormalizedEmail == email.ToUpperInvariant(), token)).ShouldBeTrue();
+        }, CancellationToken.None);
+        await second.RunAsync(tenantB, async token =>
+        {
+            (await fresh.Users.IgnoreQueryFilters().CountAsync(token)).ShouldBe(1); // tenant B never sees A's write
+        }, CancellationToken.None);
     }
 
     [DockerFact]
@@ -88,13 +127,24 @@ public sealed class TenantExecutionScopeTests : IAsyncLifetime
     }
 
     [DockerFact]
-    public async Task Nested_scope_for_another_tenant_throws()
+    public async Task Nested_scope_for_another_tenant_throws_but_same_tenant_is_allowed()
     {
         await using var db = Context(RuntimeConnection());
         var scope = new TenantExecutionScope(db);
 
         await scope.RunAsync(tenantA, async token =>
-            await Should.ThrowAsync<InvalidOperationException>(() => scope.RunAsync(tenantB, _ => Task.CompletedTask, token)), CancellationToken.None);
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() => scope.RunAsync(tenantB, _ => Task.CompletedTask, token));
+            await scope.RunAsync(tenantA, async inner => (await db.Users.CountAsync(inner)).ShouldBe(1), token);
+        }, CancellationToken.None);
+    }
+
+    [DockerFact]
+    public async Task Empty_tenant_id_is_rejected()
+    {
+        await using var db = Context(RuntimeConnection());
+        var scope = new TenantExecutionScope(db);
+        await Should.ThrowAsync<ArgumentException>(() => scope.RunAsync(Guid.Empty, _ => Task.CompletedTask, CancellationToken.None));
     }
 
     private InboxDbContext Context(string connection) =>

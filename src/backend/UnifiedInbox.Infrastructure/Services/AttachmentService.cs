@@ -10,6 +10,8 @@ public sealed class AttachmentService(InboxDbContext db, ICurrentTenant current,
 {
     private static readonly TimeSpan UploadTimeToLive = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan DownloadTimeToLive = TimeSpan.FromMinutes(5);
+    /// <summary>Upper bound for one cleanup pass so a single tenant cannot starve the worker.</summary>
+    private const int CleanupBatchSize = 200;
 
     public async Task<StagedAttachmentResponse> StageAsync(string fileName, string contentType, long size, CancellationToken token)
     {
@@ -70,11 +72,13 @@ public sealed class AttachmentService(InboxDbContext db, ICurrentTenant current,
         return new(url, item.ContentType, item.FileName, DateTimeOffset.UtcNow.Add(DownloadTimeToLive));
     }
 
-    /// <summary>Deletes expired staging records, unclaimed objects, and orphaned keys. Called by the scheduled cleanup worker.</summary>
+    /// <summary>Expires one bounded batch of stale staging records per call. Called by the
+    /// scheduled cleanup worker inside a per-tenant execution scope; the caller repeats the
+    /// call until it returns zero so every tenant is drained in bounded passes.</summary>
     public async Task<int> CleanupExpiredAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var stale = await db.Attachments.IgnoreQueryFilters().Where(x => x.Status == AttachmentStatus.Staged && x.ExpiresAt <= now).ToListAsync(cancellationToken);
+        var stale = await db.Attachments.Where(x => x.Status == AttachmentStatus.Staged && x.ExpiresAt <= now).OrderBy(x => x.ExpiresAt).Take(CleanupBatchSize).ToListAsync(cancellationToken);
         foreach (var item in stale)
         {
             item.Status = AttachmentStatus.Expired;

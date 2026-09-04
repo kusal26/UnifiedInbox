@@ -20,6 +20,8 @@ public sealed class PostgresHardeningTests : IAsyncLifetime
         await container.StartAsync();
         await using var admin = new NpgsqlConnection(OwnerConnection);
         await admin.OpenAsync();
+        await using (var create = new NpgsqlCommand("CREATE ROLE unified_inbox NOLOGIN", admin))
+            await create.ExecuteNonQueryAsync();
         await using (var create = new NpgsqlCommand("CREATE ROLE app_runtime WITH LOGIN NOBYPASSRLS PASSWORD 'test-only'", admin))
             await create.ExecuteNonQueryAsync();
         await using (var grant = new NpgsqlCommand("GRANT CONNECT ON DATABASE postgres TO app_runtime", admin))

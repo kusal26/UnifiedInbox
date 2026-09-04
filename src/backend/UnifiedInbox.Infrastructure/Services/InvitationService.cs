@@ -3,13 +3,15 @@ using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using UnifiedInbox.Application;
+using UnifiedInbox.Application.Tenancy;
 using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.Infrastructure.Services;
 
-public sealed class InvitationService(InboxDbContext db, ICurrentTenant current, IPasswordHasher<User> passwords, IMailSender mail) : IInvitationService
+public sealed class InvitationService(InboxDbContext db, ICurrentTenant current, IPasswordHasher<User> passwords, IMailSender mail, ITenantExecutionScope executionScope) : IInvitationService
 {
+    private ITenantExecutionScope Scope { get; } = executionScope;
     public async Task<IReadOnlyList<InvitationSummary>> ListAsync(CancellationToken cancellationToken)
     {
         await MembershipGuard.RequireRoleAsync(db, current, UserRole.Admin, cancellationToken);
@@ -34,7 +36,7 @@ public sealed class InvitationService(InboxDbContext db, ICurrentTenant current,
         var pending = await db.Invitations.Where(x => x.TenantId == tenantId && x.Email == normalized && x.AcceptedAt == null && x.RevokedAt == null && x.ExpiresAt > DateTimeOffset.UtcNow).ToListAsync(cancellationToken);
         foreach (var old in pending) old.RevokedAt = DateTimeOffset.UtcNow;
 
-        var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var raw = TenantToken.Create(tenantId);
         var invitation = new Invitation
         {
             TenantId = tenantId,
@@ -56,24 +58,21 @@ public sealed class InvitationService(InboxDbContext db, ICurrentTenant current,
         if (string.IsNullOrWhiteSpace(token)) return false;
         if (string.IsNullOrWhiteSpace(displayName)) throw new ArgumentException("A display name is required.", nameof(displayName));
         if (password.Length < 12) throw new ArgumentException("Password must contain at least 12 characters.", nameof(password));
-        var hash = Hash(token.Trim());
-        var invitation = await db.Invitations.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.TokenHash == hash, cancellationToken);
-        if (invitation is null || invitation.RevokedAt is not null || invitation.ExpiresAt <= DateTimeOffset.UtcNow) return false;
-        if (invitation.AcceptedAt is not null) throw new InboxException("already_member", "This invitation was already accepted.", 409);
-        var normalizedEmail = invitation.Email.Trim().ToUpperInvariant();
-        if (await db.Users.IgnoreQueryFilters().AnyAsync(x => x.TenantId == invitation.TenantId && x.NormalizedEmail == normalizedEmail && x.IsActive, cancellationToken))
-            throw new InboxException("already_member", "This invitation was already accepted.", 409);
-        var user = new User(Guid.NewGuid(), invitation.TenantId, invitation.Email.Trim(), displayName.Trim(), invitation.Role)
+        if (!TenantToken.TryGetTenantId(token.Trim(), out var tenantId)) return false;
+        return await Scope.RunAsync(tenantId, async scopedToken =>
         {
-            NormalizedEmail = normalizedEmail,
-            EmailVerifiedAt = DateTimeOffset.UtcNow, // invitation proves mailbox ownership
-        };
-        user.PasswordHash = passwords.HashPassword(user, password);
-        invitation.AcceptedAt = DateTimeOffset.UtcNow;
-        db.Users.Add(user);
-        db.AuditEntries.Add(new AuditEntryEntity { TenantId = invitation.TenantId, ActorId = user.Id, Action = "invitation.accepted", Resource = invitation.Id.ToString() });
-        await db.SaveChangesAsync(cancellationToken);
-        return true;
+            var hash = Hash(token.Trim());
+            var invitation = await db.Invitations.SingleOrDefaultAsync(x => x.TokenHash == hash, scopedToken);
+            if (invitation is null || invitation.RevokedAt is not null || invitation.ExpiresAt <= DateTimeOffset.UtcNow) return false;
+            if (invitation.AcceptedAt is not null) throw new InboxException("already_member", "This invitation was already accepted.", 409);
+            var normalizedEmail = invitation.Email.Trim().ToUpperInvariant();
+            if (await db.Users.AnyAsync(x => x.NormalizedEmail == normalizedEmail && x.IsActive, scopedToken)) throw new InboxException("already_member", "This invitation was already accepted.", 409);
+            var user = new User(Guid.NewGuid(), invitation.TenantId, invitation.Email.Trim(), displayName.Trim(), invitation.Role) { NormalizedEmail = normalizedEmail, EmailVerifiedAt = DateTimeOffset.UtcNow };
+            user.PasswordHash = passwords.HashPassword(user, password);
+            invitation.AcceptedAt = DateTimeOffset.UtcNow; db.Users.Add(user);
+            db.AuditEntries.Add(new AuditEntryEntity { TenantId = invitation.TenantId, ActorId = user.Id, Action = "invitation.accepted", Resource = invitation.Id.ToString() });
+            await db.SaveChangesAsync(scopedToken); return true;
+        }, cancellationToken);
     }
 
     public async Task<bool> RevokeAsync(Guid id, CancellationToken cancellationToken)

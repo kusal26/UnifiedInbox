@@ -1,15 +1,19 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using RabbitMQ.Client;
 using UnifiedInbox.Application;
+using UnifiedInbox.Application.Tenancy;
 using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.Worker;
 
-public sealed class OutboxDispatcher(IServiceScopeFactory scopes, ConnectionFactory factory, ILogger<OutboxDispatcher> logger) : BackgroundService
+public sealed class OutboxDispatcher(IServiceScopeFactory scopes, ConnectionFactory factory, TenantHeaderSigner signer, IConfiguration configuration, ILogger<OutboxDispatcher> logger) : BackgroundService
 {
+    private TimeSpan PollInterval => TimeSpan.FromMilliseconds(configuration.GetValue("Workers:OutboxDispatch:IntervalMs", 2000));
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await using var connection = await factory.CreateConnectionAsync(stoppingToken);
@@ -19,20 +23,28 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, ConnectionFact
         {
             try { await DispatchBatch(channel, stoppingToken); }
             catch (Exception exception) when (!stoppingToken.IsCancellationRequested) { logger.LogWarning(exception, "Outbox dispatch batch failed"); }
-            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            await Task.Delay(PollInterval, stoppingToken);
         }
     }
 
     private async Task DispatchBatch(IChannel channel, CancellationToken token)
     {
-        await using var scope = scopes.CreateAsyncScope(); var db = scope.ServiceProvider.GetRequiredService<InboxDbContext>(); var now = DateTimeOffset.UtcNow;
-        var jobs = await db.Outbox.IgnoreQueryFilters().Where(x => x.Status == OutboxStatus.Pending && x.AvailableAt <= now).OrderBy(x => x.CreatedAt).Take(50).ToListAsync(token);
+        await using var serviceScope = scopes.CreateAsyncScope(); var db = serviceScope.ServiceProvider.GetRequiredService<InboxDbContext>();
+        var tenantScope = serviceScope.ServiceProvider.GetRequiredService<ITenantExecutionScope>();
+        foreach (var tenantId in await db.Tenants.AsNoTracking().Select(x => x.Id).ToListAsync(token))
+            await tenantScope.RunAsync(tenantId, scopedToken => DispatchTenantBatchAsync(channel, db, tenantId, signer, logger, scopedToken), token);
+    }
+
+    public static async Task DispatchTenantBatchAsync(IChannel channel, InboxDbContext db, Guid tenantId, TenantHeaderSigner signer, ILogger logger, CancellationToken token)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var jobs = await db.Outbox.Where(x => x.Status == OutboxStatus.Pending && x.AvailableAt <= now).OrderBy(x => x.CreatedAt).Take(50).ToListAsync(token);
         foreach (var job in jobs)
         {
             try
             {
                 job.Status = OutboxStatus.Processing; job.Attempts++; await db.SaveChangesAsync(token);
-                var properties = new BasicProperties { Persistent = true, MessageId = job.Id.ToString(), Type = job.Type, Headers = new Dictionary<string, object?> { ["tenant-id"] = job.TenantId.ToString() } };
+                var properties = new BasicProperties { Persistent = true, MessageId = job.Id.ToString(), Type = job.Type, Headers = signer.Create(tenantId) };
                 await channel.BasicPublishAsync("unified-inbox.events", job.Type, mandatory: true, properties, Encoding.UTF8.GetBytes(job.Payload), token);
                 // Publisher confirms are enabled on this channel: the publish above only
                 // completes once the broker accepted the message.

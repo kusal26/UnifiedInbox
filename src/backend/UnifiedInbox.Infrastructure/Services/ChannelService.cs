@@ -26,7 +26,7 @@ public sealed class ChannelService(InboxDbContext db, ICurrentTenant current, IW
         var actor = await MembershipGuard.RequireRoleAsync(db, current, UserRole.Admin, cancellationToken);
         if (string.IsNullOrWhiteSpace(state) || string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(phoneNumberId) || string.IsNullOrWhiteSpace(businessId))
             throw new ArgumentException("The signup handshake is incomplete.");
-        var attempt = await db.ConnectionAttempts.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.StateHash == Hash(state.Trim()), cancellationToken);
+        var attempt = await db.ConnectionAttempts.SingleOrDefaultAsync(x => x.StateHash == Hash(state.Trim()), cancellationToken);
         if (attempt is null || attempt.TenantId != actor.TenantId || attempt.InitiatingUserId != actor.Id || attempt.ConsumedAt is not null || attempt.ExpiresAt <= DateTimeOffset.UtcNow)
             throw new InboxException("invalid_state", "The connection attempt is unknown, expired, or already used.", 400);
         attempt.ConsumedAt = DateTimeOffset.UtcNow; // single-use even when the provider rejects us
