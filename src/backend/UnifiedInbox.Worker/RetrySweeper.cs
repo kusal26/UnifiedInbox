@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using RabbitMQ.Client;
-using UnifiedInbox.Application.Tenancy;
 using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Persistence;
 
@@ -14,7 +13,7 @@ namespace UnifiedInbox.Worker;
 /// worker instance; row-version claims in <see cref="UnifiedInbox.Infrastructure.Messaging.MessageProcessor"/>
 /// keep redrives idempotent.
 /// </summary>
-public sealed class RetrySweeper(IServiceScopeFactory scopes, ConnectionFactory factory, TenantHeaderSigner signer, ILogger<RetrySweeper> logger) : BackgroundService
+public sealed class RetrySweeper(IServiceScopeFactory scopes, ConnectionFactory factory, ILogger<RetrySweeper> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -33,15 +32,8 @@ public sealed class RetrySweeper(IServiceScopeFactory scopes, ConnectionFactory 
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<InboxDbContext>();
-        var tenantScope = scope.ServiceProvider.GetRequiredService<ITenantExecutionScope>();
-        foreach (var tenantId in await db.Tenants.AsNoTracking().Select(x => x.Id).ToListAsync(token))
-            await tenantScope.RunAsync(tenantId, scopedToken => SweepTenantBatch(channel, db, scopedToken), token);
-    }
-
-    private async Task SweepTenantBatch(IChannel channel, InboxDbContext db, CancellationToken token)
-    {
         var now = DateTimeOffset.UtcNow;
-        var receipts = await db.WebhookReceipts
+        var receipts = await db.WebhookReceipts.IgnoreQueryFilters()
             .Where(x => (x.Status == WebhookStatus.Received || (x.Status == WebhookStatus.Processing && x.Attempts > 0)) && x.AvailableAt <= now)
             .OrderBy(x => x.AvailableAt).Take(50).ToListAsync(token);
         foreach (var receipt in receipts)
@@ -49,7 +41,7 @@ public sealed class RetrySweeper(IServiceScopeFactory scopes, ConnectionFactory 
             receipt.AvailableAt = now.AddMinutes(1); // lease while the redelivery is in flight
             await Publish(channel, "webhook.received", receipt.Id, receipt.TenantId, new { receiptId = receipt.Id }, token);
         }
-        var messages = await db.Messages
+        var messages = await db.Messages.IgnoreQueryFilters()
             .Where(x => (x.Status == MessageStatus.Pending || x.Status == MessageStatus.Sending) && (x.NextAttemptAt == null || x.NextAttemptAt <= now))
             .OrderBy(x => x.NextAttemptAt).Take(50).ToListAsync(token);
         foreach (var message in messages)
@@ -60,9 +52,9 @@ public sealed class RetrySweeper(IServiceScopeFactory scopes, ConnectionFactory 
         await db.SaveChangesAsync(token);
     }
 
-    private async Task Publish(IChannel channel, string type, Guid id, Guid tenantId, object payload, CancellationToken token)
+    private static async Task Publish(IChannel channel, string type, Guid id, Guid tenantId, object payload, CancellationToken token)
     {
-        var properties = new BasicProperties { Persistent = true, MessageId = $"{type}:{id}", Type = type, Headers = signer.Create(tenantId) };
+        var properties = new BasicProperties { Persistent = true, MessageId = $"{type}:{id}", Type = type, Headers = new Dictionary<string, object?> { ["tenant-id"] = tenantId.ToString() } };
         // Publisher confirms are enabled: this completes only once the broker accepted the redelivery.
         await channel.BasicPublishAsync("unified-inbox.events", type, mandatory: true, properties, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)), token);
     }

@@ -6,7 +6,7 @@ namespace UnifiedInbox.Infrastructure.Persistence;
 
 public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICurrentTenant? currentTenant = null) : DbContext(options)
 {
-    private Guid? CurrentTenantId => TenantExecutionScope.CurrentAmbientTenantId ?? currentTenant?.TenantId;
+    private Guid? CurrentTenantId => currentTenant?.TenantId;
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Channel> Channels => Set<Channel>();
@@ -78,7 +78,7 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         modelBuilder.Entity<TEntity>().HasKey("Id");
         // Fail closed: with no tenant in context, scoped queries return nothing.
         // Privileged code (login, webhook routing, worker) must opt out explicitly
-        // only by entering a TenantExecutionScope for a single transaction.
+        // via IgnoreQueryFilters for a single query.
         modelBuilder.Entity<TEntity>().HasQueryFilter("TenantFilter", entity => CurrentTenantId != null && entity.TenantId == CurrentTenantId);
         modelBuilder.Entity<TEntity>().HasIndex("TenantId");
     }

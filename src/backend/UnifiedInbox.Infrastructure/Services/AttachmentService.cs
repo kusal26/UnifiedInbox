@@ -74,7 +74,7 @@ public sealed class AttachmentService(InboxDbContext db, ICurrentTenant current,
     public async Task<int> CleanupExpiredAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var stale = await db.Attachments.Where(x => x.Status == AttachmentStatus.Staged && x.ExpiresAt <= now).ToListAsync(cancellationToken);
+        var stale = await db.Attachments.IgnoreQueryFilters().Where(x => x.Status == AttachmentStatus.Staged && x.ExpiresAt <= now).ToListAsync(cancellationToken);
         foreach (var item in stale)
         {
             item.Status = AttachmentStatus.Expired;

@@ -42,7 +42,7 @@ public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender se
 
     public async Task<WebhookOutcome> NormalizeWebhookAsync(Guid receiptId, CancellationToken token)
     {
-        var receipt = await db.WebhookReceipts.SingleOrDefaultAsync(x => x.Id == receiptId, token);
+        var receipt = await db.WebhookReceipts.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == receiptId, token);
         if (receipt is null || receipt.Status is WebhookStatus.Processed or WebhookStatus.Ignored) return WebhookOutcome.Ignored;
         receipt.Attempts++;
         receipt.Status = WebhookStatus.Processing;
@@ -59,7 +59,7 @@ public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender se
                 await db.SaveChangesAsync(token);
                 return WebhookOutcome.Ignored;
             }
-            var channel = await db.Channels.SingleAsync(x => x.Id == receipt.ChannelId, token);
+            var channel = await db.Channels.IgnoreQueryFilters().SingleAsync(x => x.Id == receipt.ChannelId, token);
             foreach (var input in parsed.Messages) await PersistInboundAsync(channel, input, token);
             foreach (var update in parsed.Statuses) await ApplyStatusUpdateAsync(channel, update, token);
             channel.LastWebhookAt = DateTimeOffset.UtcNow;
@@ -90,7 +90,7 @@ public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender se
 
     public async Task<OutboundOutcome> SendOutboundAsync(Guid messageId, CancellationToken token)
     {
-        var message = await db.Messages.SingleOrDefaultAsync(x => x.Id == messageId, token);
+        var message = await db.Messages.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == messageId, token);
         if (message is null || message.Status is MessageStatus.Sent or MessageStatus.Delivered or MessageStatus.Read or MessageStatus.Failed) return OutboundOutcome.Ignored;
         if (message.Status == MessageStatus.Unknown) return await ReconcileAsync(message, notify: false, token);
         if (message.Status == MessageStatus.Sending)
@@ -103,9 +103,9 @@ public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender se
         // Pending rows are always claimed atomically below, so broker redeliveries and
         // sweeper replays collapse into a single send via the row-version claim.
 
-        var conversation = await db.Conversations.SingleAsync(x => x.Id == message.ConversationId, token);
-        var channel = await db.Channels.SingleAsync(x => x.Id == message.ChannelId, token);
-        var contact = await db.Contacts.SingleAsync(x => x.Id == conversation.ContactId, token);
+        var conversation = await db.Conversations.IgnoreQueryFilters().SingleAsync(x => x.Id == message.ConversationId, token);
+        var channel = await db.Channels.IgnoreQueryFilters().SingleAsync(x => x.Id == message.ChannelId, token);
+        var contact = await db.Contacts.IgnoreQueryFilters().SingleAsync(x => x.Id == conversation.ContactId, token);
         if (!channel.IsEnabled)
         {
             message.Status = MessageStatus.Failed;
@@ -201,17 +201,17 @@ public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender se
 
     private async Task PersistInboundAsync(Channel channel, WhatsAppInbound input, CancellationToken token)
     {
-        if (await db.Messages.AnyAsync(x => x.ChannelId == channel.Id && x.ExternalMessageId == input.ExternalMessageId, token)) return;
-        var contact = await db.Contacts.SingleOrDefaultAsync(x => x.Platform == channel.Platform && x.ExternalAccountId == channel.ExternalAccountId && x.ExternalCustomerId == input.CustomerId, token);
+        if (await db.Messages.IgnoreQueryFilters().AnyAsync(x => x.ChannelId == channel.Id && x.ExternalMessageId == input.ExternalMessageId, token)) return;
+        var contact = await db.Contacts.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.TenantId == channel.TenantId && x.Platform == channel.Platform && x.ExternalAccountId == channel.ExternalAccountId && x.ExternalCustomerId == input.CustomerId, token);
         if (contact is null) { contact = new Contact(Guid.NewGuid(), channel.TenantId, channel.Platform, channel.ExternalAccountId, input.CustomerId, input.CustomerId, input.CustomerId); db.Contacts.Add(contact); }
-        var conversation = await db.Conversations.SingleOrDefaultAsync(x => x.ChannelId == channel.Id && x.ExternalConversationId == input.CustomerId, token);
+        var conversation = await db.Conversations.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.TenantId == channel.TenantId && x.ChannelId == channel.Id && x.ExternalConversationId == input.CustomerId, token);
         if (conversation is null)
         {
             conversation = new Conversation { TenantId = channel.TenantId, ChannelId = channel.Id, ContactId = contact.Id, ExternalConversationId = input.CustomerId };
             db.Conversations.Add(conversation);
             Emit(channel.TenantId, "conversation.created", conversation.Id);
         }
-        var sequence = Math.Max(await db.Messages.Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0, await db.InternalNotes.Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0) + 1;
+        var sequence = Math.Max(await db.Messages.IgnoreQueryFilters().Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0, await db.InternalNotes.IgnoreQueryFilters().Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0) + 1;
         var message = new Message { TenantId = channel.TenantId, ChannelId = channel.Id, ConversationId = conversation.Id, Direction = MessageDirection.Inbound, Body = input.Text ?? $"[{input.MediaMimeType ?? "unsupported message"}]", ExternalMessageId = input.ExternalMessageId, Status = MessageStatus.Delivered, Sequence = sequence };
         conversation.RecordInboundActivity(message.CreatedAt); db.Messages.Add(message);
         Emit(channel.TenantId, "message.created", message.Id);
@@ -220,7 +220,7 @@ public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender se
 
     private async Task ApplyStatusUpdateAsync(Channel channel, WhatsAppStatusUpdate update, CancellationToken token)
     {
-        var message = await db.Messages.SingleOrDefaultAsync(x => x.ChannelId == channel.Id && x.ExternalMessageId == update.ExternalMessageId, token);
+        var message = await db.Messages.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.ChannelId == channel.Id && x.ExternalMessageId == update.ExternalMessageId, token);
         if (message is null) return;
         var mapped = update.Status.ToLowerInvariant() switch
         {
