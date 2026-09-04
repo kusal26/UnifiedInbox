@@ -46,10 +46,25 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         // provider asset id before any tenant context exists.
         modelBuilder.Entity<ProviderRoute>().HasKey(x => x.Id);
         modelBuilder.Entity<ProviderRoute>().HasIndex(x => new { x.Provider, x.ProviderAssetId }).IsUnique();
-        // Explicit tenant-aware relations
-        modelBuilder.Entity<Conversation>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.ChannelId }).HasPrincipalKey(x => x.Id).OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Message>().HasOne<Conversation>().WithMany().HasForeignKey(x => x.ConversationId).HasPrincipalKey(x => x.Id).OnDelete(DeleteBehavior.Cascade);
-        modelBuilder.Entity<InternalNote>().HasOne<Conversation>().WithMany().HasForeignKey(x => x.ConversationId).HasPrincipalKey(x => x.Id).OnDelete(DeleteBehavior.Cascade);
+        // Explicit tenant-aware relations. Every tenant-scoped dependent carries TenantId in
+        // its foreign key and references the (TenantId, Id) alternate key of its parent, so a
+        // row stamped with tenant A can never reference a parent owned by tenant B.
+        modelBuilder.Entity<Conversation>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Conversation>().HasOne<Contact>().WithMany().HasForeignKey(x => new { x.TenantId, x.ContactId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Message>().HasOne<Conversation>().WithMany().HasForeignKey(x => new { x.TenantId, x.ConversationId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Message>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Message>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.SenderUserId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<InternalNote>().HasOne<Conversation>().WithMany().HasForeignKey(x => new { x.TenantId, x.ConversationId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<InternalNote>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.AuthorId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ChannelCredential>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<ChannelHealth>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Attachment>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.UploaderId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Attachment>().HasOne<Message>().WithMany().HasForeignKey(x => new { x.TenantId, x.MessageId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<NotificationPreference>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.UserId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<RefreshToken>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.UserId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Invitation>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.InvitedById }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ConnectionAttempt>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.InitiatingUserId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ConnectionAttempt>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<User>().HasIndex(x => new { x.TenantId, x.NormalizedEmail }).IsUnique();
         modelBuilder.Entity<Channel>().HasIndex(x => new { x.TenantId, x.Platform, x.ExternalAccountId }).IsUnique();
         modelBuilder.Entity<ChannelCredential>().HasIndex(x => x.ChannelId).IsUnique();

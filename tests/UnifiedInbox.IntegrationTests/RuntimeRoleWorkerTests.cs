@@ -58,11 +58,14 @@ public sealed class RuntimeRoleWorkerTests : IAsyncLifetime
         var outboxA = Guid.NewGuid();
         var staleChannel = Guid.NewGuid();
         var userA = Guid.NewGuid();
+        var userB = Guid.NewGuid();
 
         await using (var owner = Context(ownerConnection))
         {
             owner.Tenants.AddRange(new Tenant(tenantA, "worker-a", "A"), new Tenant(tenantB, "worker-b", "B"));
-            owner.Users.Add(new User(userA, tenantA, "owner-a@example.com", "Owner A", UserRole.Owner) { NormalizedEmail = "OWNER-A@EXAMPLE.COM", PasswordHash = "unused" });
+            owner.Users.AddRange(
+                new User(userA, tenantA, "owner-a@example.com", "Owner A", UserRole.Owner) { NormalizedEmail = "OWNER-A@EXAMPLE.COM", PasswordHash = "unused" },
+                new User(userB, tenantB, "owner-b@example.com", "Owner B", UserRole.Owner) { NormalizedEmail = "OWNER-B@EXAMPLE.COM", PasswordHash = "unused" });
             owner.Channels.AddRange(
                 new Channel(channelA, tenantA, "whatsapp", "phone-a", true) { IsEnabled = true, Status = "connected", LastWebhookAt = DateTimeOffset.UtcNow },
                 new Channel(staleChannel, tenantB, "whatsapp", "phone-b", true) { IsEnabled = true, Status = "connected", LastWebhookAt = DateTimeOffset.UtcNow.AddHours(-48) });
@@ -71,8 +74,8 @@ public sealed class RuntimeRoleWorkerTests : IAsyncLifetime
             owner.Messages.Add(new Message { Id = messageA, TenantId = tenantA, ChannelId = channelA, ConversationId = conversationA, Direction = MessageDirection.Outbound, Body = "hello", Status = MessageStatus.Pending, Sequence = 1 });
             owner.Outbox.Add(new OutboxEvent(outboxA, tenantA, "outbound.message.requested", JsonSerializer.Serialize(new { messageId = messageA }), DateTimeOffset.UtcNow));
             owner.Attachments.AddRange(
-                ExpiredAttachment(tenantB, userA, "expired-1.pdf"),
-                ExpiredAttachment(tenantB, userA, "expired-2.pdf"));
+                ExpiredAttachment(tenantB, userB, "expired-1.pdf"),
+                ExpiredAttachment(tenantB, userB, "expired-2.pdf"));
             await owner.SaveChangesAsync();
         }
 
