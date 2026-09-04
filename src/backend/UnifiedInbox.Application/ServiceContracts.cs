@@ -102,5 +102,7 @@ public interface IAttachmentService
     Task<StagedAttachmentResponse> StageAsync(string fileName, string contentType, long size, CancellationToken cancellationToken);
     Task<bool> CompleteAsync(Guid id, CancellationToken cancellationToken);
     Task<AttachmentDownload?> DownloadAsync(Guid id, CancellationToken cancellationToken);
+    /// <summary>Atomically binds distinct, Ready, unexpired, tenant-owned attachments to a message.</summary>
+    Task ClaimForMessageAsync(Guid messageId, IReadOnlyList<Guid> attachmentIds, CancellationToken cancellationToken);
     Task<int> CleanupExpiredAsync(CancellationToken cancellationToken);
 }

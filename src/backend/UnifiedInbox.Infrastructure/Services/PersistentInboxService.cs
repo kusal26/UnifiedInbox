@@ -7,7 +7,7 @@ using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.Infrastructure.Services;
 
-public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant current) : IInboxService
+public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant current, IAttachmentService attachments) : IInboxService
 {
     public async Task<ConversationPage> ListAsync(string? search, ConversationStatus? status, string? channel, bool unreadOnly, string? cursor, int pageSize, CancellationToken cancellationToken)
     {
@@ -59,20 +59,33 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
             throw new InboxException("messaging_window_closed", "The 24-hour customer service window is closed. Send an approved template message.", 422);
         var sequence = await NextSequence(id, cancellationToken); var message = new Message { TenantId = conversation.TenantId, ChannelId = conversation.ChannelId, ConversationId = id, Direction = MessageDirection.Outbound, SenderUserId = userId, Body = RequireBody(body), IdempotencyKey = idempotencyKey, Status = MessageStatus.Pending, Sequence = sequence, NextAttemptAt = DateTimeOffset.UtcNow.AddMinutes(2) };
         db.Messages.Add(message);
+        Touch(conversation); AddOutbox(conversation.TenantId, "outbound.message.requested", message.Id); AddOutbox(conversation.TenantId, "message.created", message.Id); AddOutbox(conversation.TenantId, "conversation.updated", conversation.Id);
+
         if (attachmentIds is { Count: > 0 })
         {
-            var ready = await db.Attachments.Where(x => attachmentIds.Contains(x.Id)).ToListAsync(cancellationToken);
-            if (ready.Count != attachmentIds.Count) throw new InboxException("attachment_not_found", "One or more attachments were not found.", 400);
-            foreach (var attachment in ready)
+            // The message must be durable before attachments can reference it, and the claims
+            // must be atomic with it: a losing concurrent send must not leave a message that
+            // references attachments it does not own. Run inside a transaction (the ambient
+            // request-scope transaction when one is already open).
+            var ownsTransaction = db.Database.IsRelational() && db.Database.CurrentTransaction is null;
+            if (ownsTransaction) await db.Database.BeginTransactionAsync(cancellationToken);
+            try
             {
-                if (attachment.TenantId != conversation.TenantId) throw new InboxException("attachment_not_found", "One or more attachments were not found.", 403);
-                if (attachment.Status != AttachmentStatus.Staged || attachment.MessageId is not null) throw new InboxException("attachment_already_claimed", "An attachment was already claimed or is no longer staged.", 409);
-                if (attachment.ExpiresAt <= DateTimeOffset.UtcNow) throw new InboxException("attachment_expired", "An attachment staging record has expired.", 410);
-                attachment.MessageId = message.Id;
-                attachment.Status = AttachmentStatus.Claimed;
+                await db.SaveChangesAsync(cancellationToken);
+                await attachments.ClaimForMessageAsync(message.Id, attachmentIds, cancellationToken);
+                if (ownsTransaction) await db.Database.CommitTransactionAsync(cancellationToken);
+            }
+            catch
+            {
+                if (ownsTransaction) await db.Database.RollbackTransactionAsync(cancellationToken);
+                throw;
             }
         }
-        Touch(conversation); AddOutbox(conversation.TenantId, "outbound.message.requested", message.Id); AddOutbox(conversation.TenantId, "message.created", message.Id); AddOutbox(conversation.TenantId, "conversation.updated", conversation.Id); await db.SaveChangesAsync(cancellationToken); return ToActivity(message);
+        else
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        return ToActivity(message);
     }
 
     public async Task<ConversationSummary?> SetStatusAsync(Guid id, ConversationStatus status, CancellationToken cancellationToken) { await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, cancellationToken); var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null; c.Status = status; Touch(c); AddOutbox(c.TenantId, "conversation.updated", c.Id); await AuditAndSave(c.TenantId, "conversation.status.changed", c.Id, cancellationToken); return await SummaryQuery().SingleAsync(x => x.Id == id, cancellationToken); }

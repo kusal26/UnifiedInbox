@@ -118,6 +118,61 @@ public sealed class AttachmentServiceTests
         (await harness.Service.DownloadAsync(staged.Id, CancellationToken.None)).ShouldBeNull();
     }
 
+    [Fact]
+    public async Task Completing_moves_an_attachment_to_ready_with_metadata()
+    {
+        var harness = Create();
+        var staged = await harness.Service.StageAsync("photo.jpg", "image/jpeg", JpegBytes.Length, CancellationToken.None);
+        harness.Storage.Objects[staged.ObjectKey] = JpegBytes;
+
+        (await harness.Service.CompleteAsync(staged.Id, CancellationToken.None)).ShouldBeTrue();
+        var item = await harness.Get(staged.Id);
+        item.Status.ShouldBe(AttachmentStatus.Ready);
+        item.CompletedAt.ShouldNotBeNull();
+        item.DetectedContentType.ShouldBe("image/jpeg");
+        item.MessageId.ShouldBeNull();
+
+        var download = await harness.Service.DownloadAsync(staged.Id, CancellationToken.None);
+        download.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Completing_an_already_completed_attachment_is_rejected()
+    {
+        var harness = Create();
+        var staged = await harness.Service.StageAsync("photo.jpg", "image/jpeg", JpegBytes.Length, CancellationToken.None);
+        harness.Storage.Objects[staged.ObjectKey] = JpegBytes;
+        (await harness.Service.CompleteAsync(staged.Id, CancellationToken.None)).ShouldBeTrue();
+
+        var failure = await Should.ThrowAsync<InboxException>(harness.Service.CompleteAsync(staged.Id, CancellationToken.None));
+        failure.Code.ShouldBe("attachment_already_claimed");
+    }
+
+    [Fact]
+    public async Task Download_of_uncompleted_staging_bytes_is_denied()
+    {
+        var harness = Create();
+        var staged = await harness.Service.StageAsync("photo.jpg", "image/jpeg", JpegBytes.Length, CancellationToken.None);
+        harness.Storage.Objects[staged.ObjectKey] = JpegBytes; // bytes uploaded but never completed/scanned
+
+        (await harness.Service.DownloadAsync(staged.Id, CancellationToken.None)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Cleanup_expires_ready_but_unclaimed_objects()
+    {
+        var harness = Create();
+        var staged = await harness.Service.StageAsync("photo.jpg", "image/jpeg", JpegBytes.Length, CancellationToken.None);
+        harness.Storage.Objects[staged.ObjectKey] = JpegBytes;
+        (await harness.Service.CompleteAsync(staged.Id, CancellationToken.None)).ShouldBeTrue();
+        await harness.Expire(staged.Id, alreadyPast: true);
+
+        (await harness.Service.CleanupExpiredAsync(CancellationToken.None)).ShouldBe(1);
+        var item = await harness.Get(staged.Id);
+        item.Status.ShouldBe(AttachmentStatus.Expired);
+        harness.Storage.Objects.ShouldNotContainKey(staged.ObjectKey);
+    }
+
     private static readonly Guid TenantA = Guid.NewGuid();
     private static readonly Guid TenantB = Guid.NewGuid();
 
@@ -141,6 +196,8 @@ public sealed class AttachmentServiceTests
             item.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(alreadyPast ? -20 : -1);
             await Db.SaveChangesAsync();
         }
+
+        public Task<Attachment> Get(Guid id) => Db.Attachments.SingleAsync(x => x.Id == id);
     }
 
     private sealed class TestTenant(Guid tenantId) : ICurrentTenant
