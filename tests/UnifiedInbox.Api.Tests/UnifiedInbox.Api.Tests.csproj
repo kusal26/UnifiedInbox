@@ -1,32 +1,21 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
-
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
-    <PackageReference Include="SSH.NET" />
-    <PackageReference Include="Testcontainers.PostgreSql" />
-    <PackageReference Include="Testcontainers.RabbitMq" />
-    <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Shouldly" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="SSH.NET" />
   </ItemGroup>
-
-  <ItemGroup>
-    <Using Include="Xunit" />
-  </ItemGroup>
-
+  <ItemGroup><Using Include="Xunit" /></ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\backend\UnifiedInbox.Api\UnifiedInbox.Api.csproj" />
     <ProjectReference Include="..\..\src\backend\UnifiedInbox.Infrastructure\UnifiedInbox.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\src\backend\UnifiedInbox.Worker\UnifiedInbox.Worker.csproj" />
   </ItemGroup>
-
 </Project>

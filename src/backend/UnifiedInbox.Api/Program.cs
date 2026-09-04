@@ -10,6 +10,7 @@ using RabbitMQ.Client;
 using UnifiedInbox.Api.Hubs;
 using UnifiedInbox.Api.Security;
 using UnifiedInbox.Application;
+using UnifiedInbox.Application.Tenancy;
 using UnifiedInbox.Domain;
 using UnifiedInbox.Infrastructure.Channels.WhatsApp;
 using UnifiedInbox.Infrastructure.Persistence;
@@ -26,8 +27,8 @@ builder.Services.AddExceptionHandler<UnifiedInbox.Api.ProblemExceptionHandler>()
 builder.Services.AddControllers();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentTenant, CurrentRequestContext>();
-builder.Services.AddScoped<TenantSessionInterceptor>();
-builder.Services.AddDbContext<InboxDbContext>((services, options) => options.UseNpgsql(connectionString).AddInterceptors(services.GetRequiredService<TenantSessionInterceptor>()));
+builder.Services.AddDbContext<InboxDbContext>(options => options.UseNpgsql(connectionString));
+builder.Services.AddScoped<ITenantExecutionScope, TenantExecutionScope>();
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<ITokenIssuer, JwtTokenIssuer>();
 builder.Services.AddScoped<IAuthService, AuthenticationService>();
@@ -58,7 +59,18 @@ builder.Services.AddOpenTelemetry().WithTracing(tracing => tracing.AddAspNetCore
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.WithOrigins(builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? ["http://localhost:5173"]).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
 
 var app = builder.Build();
-app.UseExceptionHandler(); app.UseRateLimiter(); app.UseCors(); app.UseAuthentication(); app.UseAuthorization();
+app.UseExceptionHandler(); app.UseRateLimiter(); app.UseCors(); app.UseAuthentication();
+app.Use(async (context, next) =>
+{
+    if (Guid.TryParse(context.User.FindFirst("tenant_id")?.Value, out var tenantId))
+    {
+        var tenantScope = context.RequestServices.GetRequiredService<ITenantExecutionScope>();
+        await tenantScope.RunAsync(tenantId, _ => next(context), context.RequestAborted);
+        return;
+    }
+    await next(context);
+});
+app.UseAuthorization();
 app.MapControllers(); app.MapHub<InboxHub>("/hubs/inbox", options => options.CloseOnAuthenticationExpiration = true);
 // Migrations run only in the dedicated one-shot migrator container
 // (docker compose service `migrator`) or with --migrate / RUN_MIGRATIONS=true.

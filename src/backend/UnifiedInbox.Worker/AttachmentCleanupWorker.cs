@@ -1,4 +1,7 @@
 using UnifiedInbox.Application;
+using UnifiedInbox.Application.Tenancy;
+using Microsoft.EntityFrameworkCore;
+using UnifiedInbox.Infrastructure.Persistence;
 
 namespace UnifiedInbox.Worker;
 
@@ -14,8 +17,13 @@ public sealed class AttachmentCleanupWorker(IServiceScopeFactory scopes, ILogger
             {
                 await using var scope = scopes.CreateAsyncScope();
                 var attachments = scope.ServiceProvider.GetRequiredService<IAttachmentService>();
-                var expired = await attachments.CleanupExpiredAsync(stoppingToken);
-                if (expired > 0) logger.LogInformation("Attachment cleanup expired {Count} staging records", expired);
+                var db = scope.ServiceProvider.GetRequiredService<InboxDbContext>();
+                var tenantScope = scope.ServiceProvider.GetRequiredService<ITenantExecutionScope>();
+                foreach (var tenantId in await db.Tenants.AsNoTracking().Select(x => x.Id).ToListAsync(stoppingToken))
+                {
+                    var expired = await CleanupTenantAsync(attachments, tenantScope, tenantId, stoppingToken);
+                    if (expired > 0) logger.LogInformation("Attachment cleanup expired {Count} staging records for tenant {TenantId}", expired, tenantId);
+                }
             }
             catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
@@ -24,4 +32,7 @@ public sealed class AttachmentCleanupWorker(IServiceScopeFactory scopes, ILogger
             await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
         }
     }
+
+    public static Task<int> CleanupTenantAsync(IAttachmentService attachments, ITenantExecutionScope tenantScope, Guid tenantId, CancellationToken token) =>
+        tenantScope.RunAsync(tenantId, attachments.CleanupExpiredAsync, token);
 }
