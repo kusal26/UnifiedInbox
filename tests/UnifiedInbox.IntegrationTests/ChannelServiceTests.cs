@@ -264,5 +264,6 @@ public sealed class ChannelServiceTests
             return Task.CompletedTask;
         }
         public Task<IReadOnlyList<WhatsAppTemplateInfo>> ListMessageTemplatesAsync(string businessId, string accessToken, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<WhatsAppTemplateInfo>>([]);
+        public Task<GraphMediaMetadata> GetMediaAsync(string mediaId, string accessToken, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

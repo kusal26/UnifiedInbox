@@ -18,6 +18,6 @@ public sealed class WhatsAppContractTests
     {
         using var document = System.Text.Json.JsonDocument.Parse("""{"entry":[{"changes":[{"value":{"messages":[{"id":"wamid.1","from":"15550001","text":{"body":"hello"}}]}}]}]}""");
         var messages = new WhatsAppPayloadParser().Parse(document.RootElement);
-        messages.Single().ShouldBe(new WhatsAppInbound("wamid.1", "15550001", "hello", null));
+        messages.Single().ShouldBe(new WhatsAppInbound("wamid.1", "15550001", "hello", null, null, null, WhatsAppInboundKind.None));
     }
 }

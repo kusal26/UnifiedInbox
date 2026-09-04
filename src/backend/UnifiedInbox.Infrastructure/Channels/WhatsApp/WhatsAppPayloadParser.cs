@@ -2,13 +2,30 @@ using System.Text.Json;
 
 namespace UnifiedInbox.Infrastructure.Channels.WhatsApp;
 
-public sealed record WhatsAppInbound(string ExternalMessageId, string CustomerId, string? Text, string? MediaMimeType);
+public enum WhatsAppInboundKind { None, Image, Video, Audio, Document, Sticker }
+
+public sealed record WhatsAppInbound(
+    string ExternalMessageId,
+    string CustomerId,
+    string? Text,
+    string? MediaId,
+    string? DeclaredMimeType,
+    string? FileName,
+    WhatsAppInboundKind Kind);
+
 public sealed record WhatsAppStatusUpdate(string ExternalMessageId, string Status, DateTimeOffset? OccurredAt);
 public sealed record WhatsAppParsed(IReadOnlyList<WhatsAppInbound> Messages, IReadOnlyList<WhatsAppStatusUpdate> Statuses);
 
 public sealed class WhatsAppPayloadParser
 {
-    private static readonly string[] MediaFields = ["image", "video", "audio", "document", "sticker"];
+    private static readonly (string Field, WhatsAppInboundKind Kind)[] MediaFields =
+    [
+        ("image", WhatsAppInboundKind.Image),
+        ("video", WhatsAppInboundKind.Video),
+        ("audio", WhatsAppInboundKind.Audio),
+        ("document", WhatsAppInboundKind.Document),
+        ("sticker", WhatsAppInboundKind.Sticker),
+    ];
 
     public IReadOnlyList<WhatsAppInbound> Parse(JsonElement payload) => ParseFull(payload).Messages;
 
@@ -38,15 +55,21 @@ public sealed class WhatsAppPayloadParser
         var from = item.GetProperty("from").GetString() ?? "";
         string? text = null;
         if (item.TryGetProperty("text", out var textNode) && textNode.TryGetProperty("body", out var body)) text = body.GetString();
-        string? media = null;
-        foreach (var field in MediaFields)
+        string? mediaId = null;
+        string? mime = null;
+        string? fileName = null;
+        var kind = WhatsAppInboundKind.None;
+        foreach (var (field, fieldKind) in MediaFields)
             if (item.TryGetProperty(field, out var node))
             {
-                if (node.TryGetProperty("mime_type", out var mime)) media = mime.GetString();
+                kind = fieldKind;
+                if (node.TryGetProperty("id", out var media)) mediaId = media.GetString();
+                if (node.TryGetProperty("mime_type", out var declared)) mime = declared.GetString();
+                if (node.TryGetProperty("filename", out var name)) fileName = name.GetString();
                 if (text is null && node.TryGetProperty("caption", out var caption)) text = caption.GetString();
                 break;
             }
-        return new(id, from, text, media);
+        return new(id, from, text, mediaId, mime, fileName, kind);
     }
 
     private static WhatsAppStatusUpdate ParseStatus(JsonElement item)

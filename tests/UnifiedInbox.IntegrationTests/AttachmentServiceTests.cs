@@ -223,6 +223,12 @@ public sealed class AttachmentServiceTests
         public Task<Stream> OpenReadAsync(string objectKey, CancellationToken cancellationToken) => Task.FromResult<Stream>(new MemoryStream(Objects[objectKey], writable: false));
         public Task<StoredObjectInfo?> StatAsync(string objectKey, CancellationToken cancellationToken) => Task.FromResult<StoredObjectInfo?>(Objects.TryGetValue(objectKey, out var bytes) ? new(bytes.Length, null) : null);
         public Task DeleteAsync(string objectKey, CancellationToken cancellationToken) { Objects.Remove(objectKey); return Task.CompletedTask; }
+        public async Task StoreAsync(string objectKey, string contentType, Stream content, CancellationToken cancellationToken)
+        {
+            using var buffer = new MemoryStream();
+            await content.CopyToAsync(buffer, cancellationToken);
+            Objects[objectKey] = buffer.ToArray();
+        }
     }
 
     private sealed class FakeScanner(AttachmentScanResult result) : IAttachmentScanner

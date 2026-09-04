@@ -12,6 +12,8 @@ public sealed record WhatsAppTemplateInfo(string Name, string Language, string C
 /// <summary>The provider component type (BODY/HEADER/FOOTER/BUTTONS) and the number of parameters
 /// the approved template requires for it (derived from placeholders/media format).</summary>
 public sealed record WhatsAppTemplateComponentInfo(string Type, int ParameterCount);
+/// <summary>Authenticated media metadata used to download inbound bytes privately.</summary>
+public sealed record GraphMediaMetadata(string Url, string MimeType, long? FileSize);
 
 /// <summary>Minimal Meta Graph API surface for WhatsApp onboarding. Implemented against the configured Graph version.</summary>
 public interface IWhatsAppGraphClient
@@ -25,6 +27,8 @@ public interface IWhatsAppGraphClient
     Task UnsubscribeAppAsync(string businessId, string accessToken, CancellationToken cancellationToken);
     /// <summary>Lists the WABA's message templates. The caller decides status filtering and sanitization.</summary>
     Task<IReadOnlyList<WhatsAppTemplateInfo>> ListMessageTemplatesAsync(string businessId, string accessToken, CancellationToken cancellationToken);
+    /// <summary>Resolves authenticated media metadata (download url, mime type, size) for a media id.</summary>
+    Task<GraphMediaMetadata> GetMediaAsync(string mediaId, string accessToken, CancellationToken cancellationToken);
 }
 
 public interface IChannelService

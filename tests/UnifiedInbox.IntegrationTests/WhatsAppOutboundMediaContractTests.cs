@@ -136,6 +136,7 @@ public sealed class WhatsAppOutboundMediaContractTests
         public Task<string> PresignedGetAsync(string objectKey, TimeSpan timeToLive, CancellationToken cancellationToken) => Task.FromResult("https://storage.test/" + objectKey);
         public Task<string> PresignedPutAsync(string objectKey, string contentType, TimeSpan timeToLive, CancellationToken cancellationToken) => Task.FromResult("https://storage.test/" + objectKey);
         public Task<StoredObjectInfo?> StatAsync(string objectKey, CancellationToken cancellationToken) => Task.FromResult<StoredObjectInfo?>(new StoredObjectInfo(9, null));
+        public Task StoreAsync(string objectKey, string contentType, Stream content, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class ProductionEnvironment : IHostEnvironment

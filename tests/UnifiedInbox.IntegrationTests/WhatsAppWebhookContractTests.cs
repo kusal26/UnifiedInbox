@@ -25,16 +25,48 @@ public sealed class WhatsAppWebhookContractTests
     }
 
     [Fact]
-    public void Media_messages_carry_mime_type_and_caption()
+    public void Media_messages_carry_media_id_mime_kind_and_caption()
     {
         var parsed = new WhatsAppPayloadParser().ParseFull(Doc("""
             {"entry":[{"changes":[{"value":{
-              "messages":[{"id":"wamid.2","from":"15550001","image":{"mime_type":"image/jpeg","caption":"look"}}]
+              "messages":[{"id":"wamid.2","from":"15550001","image":{"id":"media-9","mime_type":"image/jpeg","caption":"look"}}]
             }}]}]}
             """));
         var message = parsed.Messages.ShouldHaveSingleItem();
-        message.MediaMimeType.ShouldBe("image/jpeg");
+        message.MediaId.ShouldBe("media-9");
+        message.DeclaredMimeType.ShouldBe("image/jpeg");
+        message.Kind.ShouldBe(WhatsAppInboundKind.Image);
         message.Text.ShouldBe("look");
+    }
+
+    [Fact]
+    public void Video_and_document_messages_carry_their_kind_and_file_name()
+    {
+        var parsed = new WhatsAppPayloadParser().ParseFull(Doc("""
+            {"entry":[{"changes":[{"value":{"messages":[
+              {"id":"wamid.v","from":"15550001","video":{"id":"media-v","mime_type":"video/mp4"}},
+              {"id":"wamid.d","from":"15550001","document":{"id":"media-d","mime_type":"application/pdf","filename":"brief.pdf"}}
+            ]}}]}]}
+            """));
+        var video = parsed.Messages[0];
+        video.Kind.ShouldBe(WhatsAppInboundKind.Video);
+        video.MediaId.ShouldBe("media-v");
+        var document = parsed.Messages[1];
+        document.Kind.ShouldBe(WhatsAppInboundKind.Document);
+        document.FileName.ShouldBe("brief.pdf");
+    }
+
+    [Fact]
+    public void Audio_and_stickers_are_parsed_but_never_ingested()
+    {
+        var parsed = new WhatsAppPayloadParser().ParseFull(Doc("""
+            {"entry":[{"changes":[{"value":{"messages":[
+              {"id":"wamid.a","from":"15550001","audio":{"id":"media-a","mime_type":"audio/ogg"}},
+              {"id":"wamid.s","from":"15550001","sticker":{"id":"media-s","mime_type":"image/webp"}}
+            ]}}]}]}
+            """));
+        parsed.Messages[0].Kind.ShouldBe(WhatsAppInboundKind.Audio);
+        parsed.Messages[1].Kind.ShouldBe(WhatsAppInboundKind.Sticker);
     }
 
     [Fact]

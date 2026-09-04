@@ -38,7 +38,7 @@ public static class MessageEnvelope
 /// New sends are modeled as durable delivery parts (text/template/attachment), each with its
 /// own provider id, retry state, and status, aggregated onto one parent message row.
 /// </summary>
-public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender sender, ILogger<MessageProcessor> logger)
+public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender sender, ILogger<MessageProcessor> logger, InboundMediaIngestor? media = null)
 {
     private static readonly TimeSpan VisibilityTimeout = TimeSpan.FromMinutes(5);
 
@@ -398,20 +398,43 @@ public sealed class MessageProcessor(InboxDbContext db, WhatsAppMessageSender se
     private async Task PersistInboundAsync(Channel channel, WhatsAppInbound input, CancellationToken token)
     {
         if (await db.Messages.AnyAsync(x => x.ChannelId == channel.Id && x.ExternalMessageId == input.ExternalMessageId, token)) return;
-        var contact = await db.Contacts.SingleOrDefaultAsync(x => x.Platform == channel.Platform && x.ExternalAccountId == channel.ExternalAccountId && x.ExternalCustomerId == input.CustomerId, token);
-        if (contact is null) { contact = new Contact(Guid.NewGuid(), channel.TenantId, channel.Platform, channel.ExternalAccountId, input.CustomerId, input.CustomerId, input.CustomerId); db.Contacts.Add(contact); }
-        var conversation = await db.Conversations.SingleOrDefaultAsync(x => x.ChannelId == channel.Id && x.ExternalConversationId == input.CustomerId, token);
-        if (conversation is null)
+        var foundContact = await db.Contacts.SingleOrDefaultAsync(x => x.Platform == channel.Platform && x.ExternalAccountId == channel.ExternalAccountId && x.ExternalCustomerId == input.CustomerId, token);
+        var contact = foundContact ?? new Contact(Guid.NewGuid(), channel.TenantId, channel.Platform, channel.ExternalAccountId, input.CustomerId, input.CustomerId, input.CustomerId);
+        var newContact = foundContact is null;
+        var foundConversation = await db.Conversations.SingleOrDefaultAsync(x => x.ChannelId == channel.Id && x.ExternalConversationId == input.CustomerId, token);
+        var conversation = foundConversation ?? new Conversation { TenantId = channel.TenantId, ChannelId = channel.Id, ContactId = contact.Id, ExternalConversationId = input.CustomerId };
+        var newConversation = foundConversation is null;
+        var sequence = Math.Max(await db.Messages.Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0, await db.InternalNotes.Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0) + 1;
+        var message = new Message { TenantId = channel.TenantId, ChannelId = channel.Id, ConversationId = conversation.Id, Direction = MessageDirection.Inbound, Body = InboundBody(input), ExternalMessageId = input.ExternalMessageId, Status = MessageStatus.Delivered, Sequence = sequence };
+        // Supported media is ingested privately (download, scan, tenant-scoped store) BEFORE any
+        // row is added, so a transient ingest failure rolls back the whole webhook and no message
+        // (or empty conversation) is left behind. The message, its attachment, and a new
+        // conversation commit together in the normalization transaction.
+        if (media is not null && input.MediaId is not null && input.Kind is WhatsAppInboundKind.Image or WhatsAppInboundKind.Video or WhatsAppInboundKind.Document)
+            await media.IngestAsync(channel, message, input, token);
+        if (newContact) db.Contacts.Add(contact);
+        if (newConversation)
         {
-            conversation = new Conversation { TenantId = channel.TenantId, ChannelId = channel.Id, ContactId = contact.Id, ExternalConversationId = input.CustomerId };
             db.Conversations.Add(conversation);
             Emit(channel.TenantId, "conversation.created", conversation.Id);
         }
-        var sequence = Math.Max(await db.Messages.Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0, await db.InternalNotes.Where(x => x.ConversationId == conversation.Id).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0) + 1;
-        var message = new Message { TenantId = channel.TenantId, ChannelId = channel.Id, ConversationId = conversation.Id, Direction = MessageDirection.Inbound, Body = input.Text ?? $"[{input.MediaMimeType ?? "unsupported message"}]", ExternalMessageId = input.ExternalMessageId, Status = MessageStatus.Delivered, Sequence = sequence };
         conversation.RecordInboundActivity(message.CreatedAt); db.Messages.Add(message);
         Emit(channel.TenantId, "message.created", message.Id);
         Emit(channel.TenantId, "conversation.updated", conversation.Id);
+    }
+
+    private static string InboundBody(WhatsAppInbound input)
+    {
+        if (!string.IsNullOrWhiteSpace(input.Text)) return input.Text;
+        return input.Kind switch
+        {
+            WhatsAppInboundKind.Image => "[image]",
+            WhatsAppInboundKind.Video => "[video]",
+            WhatsAppInboundKind.Audio => "[audio message]",
+            WhatsAppInboundKind.Document => "[document]",
+            WhatsAppInboundKind.Sticker => "[sticker]",
+            _ => string.IsNullOrWhiteSpace(input.DeclaredMimeType) ? "[unsupported message]" : $"[{input.DeclaredMimeType}]",
+        };
     }
 
     private async Task ApplyStatusUpdateAsync(Channel channel, WhatsAppStatusUpdate update, CancellationToken token)

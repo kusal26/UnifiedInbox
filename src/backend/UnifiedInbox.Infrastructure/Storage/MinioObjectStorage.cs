@@ -67,6 +67,12 @@ public sealed class MinioObjectStorage : IObjectStorage
         return output;
     }
 
+    public async Task StoreAsync(string objectKey, string contentType, Stream content, CancellationToken cancellationToken)
+    {
+        await EnsureBucketAsync(cancellationToken).ConfigureAwait(false);
+        await internalClient.PutObjectAsync(new PutObjectArgs().WithBucket(bucket).WithObject(objectKey).WithStreamData(content).WithContentType(contentType), cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<StoredObjectInfo?> StatAsync(string objectKey, CancellationToken cancellationToken)
     {
         try

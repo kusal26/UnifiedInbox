@@ -63,6 +63,7 @@ public sealed class InboxDbContext(DbContextOptions<InboxDbContext> options, ICu
         modelBuilder.Entity<ChannelHealth>().HasOne<Channel>().WithMany().HasForeignKey(x => new { x.TenantId, x.ChannelId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<Attachment>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.UploaderId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Attachment>().HasOne<Message>().WithMany().HasForeignKey(x => new { x.TenantId, x.MessageId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Attachment>().HasIndex(x => new { x.TenantId, x.MessageId, x.ProviderMediaId }).IsUnique().HasFilter("\"ProviderMediaId\" IS NOT NULL");
         modelBuilder.Entity<NotificationPreference>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.UserId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<RefreshToken>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.UserId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<Invitation>().HasOne<User>().WithMany().HasForeignKey(x => new { x.TenantId, x.InvitedById }).HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);

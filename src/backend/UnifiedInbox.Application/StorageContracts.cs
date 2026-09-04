@@ -12,6 +12,9 @@ public interface IObjectStorage
     /// <summary>Opens the stored bytes for server-side verification (magic bytes, malware scan).</summary>
     Task<Stream> OpenReadAsync(string objectKey, CancellationToken cancellationToken);
 
+    /// <summary>Stores bytes server-side (inbound ingestion and media replay).</summary>
+    Task StoreAsync(string objectKey, string contentType, Stream content, CancellationToken cancellationToken);
+
     /// <summary>Returns stored size/content-type, or null when the key does not exist.</summary>
     Task<StoredObjectInfo?> StatAsync(string objectKey, CancellationToken cancellationToken);
 

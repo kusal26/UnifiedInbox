@@ -114,6 +114,21 @@ public sealed class WhatsAppGraphClient(HttpClient http, IConfiguration configur
     private static string Property(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
+    public async Task<GraphMediaMetadata> GetMediaAsync(string mediaId, string accessToken, CancellationToken cancellationToken)
+    {
+        using var request = GraphGet($"{mediaId}?fields=url,mime_type,file_size,sha256", accessToken);
+        using var response = await http.SendAsync(request, cancellationToken);
+        await EnsureGraphSuccess(response, "media lookup", cancellationToken);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(cancellationToken));
+        var root = body.RootElement;
+        var url = Property(root, "url");
+        if (string.IsNullOrWhiteSpace(url)) throw new InboxException("provider_error", "The provider did not return a media url.", 502);
+        var mime = Property(root, "mime_type");
+        long? size = null;
+        if (root.TryGetProperty("file_size", out var rawSize) && long.TryParse(rawSize.GetString(), out var parsed)) size = parsed;
+        return new GraphMediaMetadata(url, mime, size);
+    }
+
     private HttpRequestMessage GraphGet(string path, string accessToken)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"https://graph.facebook.com/{Version}/{path}");

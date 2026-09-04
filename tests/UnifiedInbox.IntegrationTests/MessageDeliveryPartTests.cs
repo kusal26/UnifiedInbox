@@ -454,6 +454,7 @@ public sealed class MessageDeliveryPartTests(MessageDeliveryPartFixture fixture)
         public Task<string> PresignedGetAsync(string objectKey, TimeSpan timeToLive, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<string> PresignedPutAsync(string objectKey, string contentType, TimeSpan timeToLive, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<StoredObjectInfo?> StatAsync(string objectKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task StoreAsync(string objectKey, string contentType, Stream content, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class UnusedScanner : IAttachmentScanner

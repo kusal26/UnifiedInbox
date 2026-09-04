@@ -40,6 +40,9 @@ public static class WorkerHost
         builder.Services.AddSingleton<IAttachmentScanner, ClamAvScanner>();
         builder.Services.AddScoped<IAttachmentService, AttachmentService>();
         builder.Services.AddHttpClient<WhatsAppMessageSender>();
+        builder.Services.AddHttpClient<IWhatsAppGraphClient, WhatsAppGraphClient>();
+        builder.Services.AddHttpClient();
+        builder.Services.AddScoped<InboundMediaIngestor>();
         builder.Services.AddScoped<MessageProcessor>();
         builder.Services.AddSingleton(new ConnectionFactory { Uri = new Uri(rabbit), AutomaticRecoveryEnabled = true });
         builder.Services.AddSingleton(new TenantHeaderSigner(tenantHeaderKey));
