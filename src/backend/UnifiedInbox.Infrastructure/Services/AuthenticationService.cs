@@ -103,24 +103,39 @@ public sealed class AuthenticationService(InboxDbContext db, IPasswordHasher<Use
         }, cancellationToken);
     }
 
-    public Task<AuthTokens?> RefreshAsync(string refreshToken, CancellationToken token) => WithTokenTenant<AuthTokens?>(refreshToken, null, async scopedToken =>
+    public async Task<AuthTokens?> RefreshAsync(string refreshToken, CancellationToken token)
     {
-        var stored = await db.RefreshTokens.SingleOrDefaultAsync(x => x.TokenHash == Hash(refreshToken), scopedToken);
-        if (stored is null || stored.ExpiresAt <= DateTimeOffset.UtcNow) return null;
-        if (stored.RevokedAt is not null)
+        if (!TenantToken.TryGetTenantId(refreshToken, out var tenantId)) return null;
+
+        // Reuse detection revokes the whole family and must be durable before the caller
+        // learns about it: the detection scope commits normally, then we throw outside it.
+        var reused = await Scope.RunAsync(tenantId, async scopedToken =>
         {
-            foreach (var member in await db.RefreshTokens.Where(x => x.FamilyId == stored.FamilyId && x.RevokedAt == null).ToListAsync(scopedToken)) member.RevokedAt = DateTimeOffset.UtcNow;
-            db.AuditEntries.Add(new AuditEntryEntity { TenantId = stored.TenantId, ActorId = stored.UserId, Action = "auth.token.reuse.detected", Resource = stored.UserId.ToString() });
-            await db.SaveChangesAsync(scopedToken);
-            throw new InboxException("token_reuse_detected", "Refresh token reuse detected. All sessions were revoked.", 401);
-        }
-        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == stored.UserId && x.IsActive, scopedToken);
-        if (user is null || user.EmailVerifiedAt is null) return null;
-        stored.RevokedAt = DateTimeOffset.UtcNow;
-        var result = await CreateTokensAsync(user, scopedToken, stored.FamilyId, false);
-        stored.ReplacedById = db.RefreshTokens.Local.Single(x => x.TokenHash == Hash(result.RefreshToken)).Id;
-        await db.SaveChangesAsync(scopedToken); return result;
-    }, token);
+            var stored = await db.RefreshTokens.SingleOrDefaultAsync(x => x.TokenHash == Hash(refreshToken), scopedToken);
+            if (stored is null || stored.ExpiresAt <= DateTimeOffset.UtcNow) return false;
+            if (stored.RevokedAt is not null)
+            {
+                foreach (var member in await db.RefreshTokens.Where(x => x.FamilyId == stored.FamilyId && x.RevokedAt == null).ToListAsync(scopedToken)) member.RevokedAt = DateTimeOffset.UtcNow;
+                db.AuditEntries.Add(new AuditEntryEntity { TenantId = stored.TenantId, ActorId = stored.UserId, Action = "auth.token.reuse.detected", Resource = stored.UserId.ToString() });
+                await db.SaveChangesAsync(scopedToken);
+                return true;
+            }
+            return false;
+        }, token);
+        if (reused) throw new InboxException("token_reuse_detected", "Refresh token reuse detected. All sessions were revoked.", 401);
+
+        return await Scope.RunAsync(tenantId, async scopedToken =>
+        {
+            var stored = await db.RefreshTokens.SingleOrDefaultAsync(x => x.TokenHash == Hash(refreshToken), scopedToken);
+            if (stored is null || stored.ExpiresAt <= DateTimeOffset.UtcNow) return null;
+            var user = await db.Users.SingleOrDefaultAsync(x => x.Id == stored.UserId && x.IsActive, scopedToken);
+            if (user is null || user.EmailVerifiedAt is null) return null;
+            stored.RevokedAt = DateTimeOffset.UtcNow;
+            var result = await CreateTokensAsync(user, scopedToken, stored.FamilyId, false);
+            stored.ReplacedById = db.RefreshTokens.Local.Single(x => x.TokenHash == Hash(result.RefreshToken)).Id;
+            await db.SaveChangesAsync(scopedToken); return result;
+        }, token);
+    }
 
     public Task RevokeAsync(string refreshToken, CancellationToken token) => WithTokenTenant(refreshToken, async scopedToken =>
     {

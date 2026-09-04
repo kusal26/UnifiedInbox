@@ -144,13 +144,14 @@ public sealed class RuntimeRoleWorkerTests : IAsyncLifetime
     public async Task Consumer_rejects_a_message_whose_header_tenant_mismatches_the_record()
     {
         var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
         var channelId = Guid.NewGuid();
         var contactId = Guid.NewGuid();
         var conversationId = Guid.NewGuid();
         var messageId = Guid.NewGuid();
         await using (var owner = Context(ownerConnection))
         {
-            owner.Tenants.Add(new Tenant(tenantA, "mismatch-a", "A"));
+            owner.Tenants.AddRange(new Tenant(tenantA, "mismatch-a", "A"), new Tenant(tenantB, "mismatch-b", "B"));
             owner.Channels.Add(new Channel(channelId, tenantA, "whatsapp", "phone-mm", true) { IsEnabled = true, Status = "connected" });
             owner.Contacts.Add(new Contact(contactId, tenantA, "whatsapp", "phone-mm", "15550002", "C", "+15550002"));
             owner.Conversations.Add(new Conversation { Id = conversationId, TenantId = tenantA, ChannelId = channelId, ContactId = contactId, ExternalConversationId = "15550002", LastCustomerMessageAt = DateTimeOffset.UtcNow });
@@ -163,8 +164,14 @@ public sealed class RuntimeRoleWorkerTests : IAsyncLifetime
         await publish.ExchangeDeclareAsync("unified-inbox.events", ExchangeType.Topic, durable: true, autoDelete: false);
         await publish.QueueDeclareAsync("unified-inbox.worker", durable: true, exclusive: false, autoDelete: false);
         await publish.QueueBindAsync("unified-inbox.worker", "unified-inbox.events", "outbound.message.requested");
-        var tampered = new Dictionary<string, object?> { ["tenant-id"] = Guid.NewGuid().ToString(), ["tenant-signature"] = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(Encoding.UTF8.GetBytes(SigningKey), Encoding.UTF8.GetBytes(Guid.NewGuid().ToString()))) };
-        var properties = new BasicProperties { Persistent = true, Type = "outbound.message.requested", Headers = tampered };
+        // The header is VALID but routes to tenant B while the message record belongs to tenant A:
+        // the consumer must reject the mismatch instead of sending.
+        var validForOtherTenant = new Dictionary<string, object?>
+        {
+            ["tenant-id"] = tenantB.ToString(),
+            ["tenant-signature"] = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(Encoding.UTF8.GetBytes(SigningKey), Encoding.UTF8.GetBytes(tenantB.ToString())))
+        };
+        var properties = new BasicProperties { Persistent = true, Type = "outbound.message.requested", Headers = validForOtherTenant };
         await publish.BasicPublishAsync("unified-inbox.events", "outbound.message.requested", mandatory: true, properties, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { messageId })));
 
         var host = WorkerHost.CreateHost([], builder =>

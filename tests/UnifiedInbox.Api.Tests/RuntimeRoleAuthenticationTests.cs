@@ -51,11 +51,17 @@ public sealed class RuntimeRoleAuthenticationTests(RuntimeRoleFixture fixture)
         rotated.StatusCode.ShouldBe(HttpStatusCode.OK);
         var rotatedBody = await rotated.Content.ReadFromJsonAsync<TokenResponse>();
         rotatedBody!.AccessToken.ShouldNotBeNullOrWhiteSpace();
+        var currentRefreshToken = ExtractCookie(rotated, "refresh_token").ShouldNotBeNull();
 
         var reuse = await RefreshAsync(client, refreshToken);
         reuse.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         var problem = await reuse.Content.ReadFromJsonAsync<ProblemResponse>();
         problem!.Code.ShouldBe("token_reuse_detected");
+
+        // Reuse revocation is durable: the whole family (including the current rotated token)
+        // is revoked, so the live session can no longer refresh either.
+        var revokedLiveSession = await RefreshAsync(client, currentRefreshToken);
+        revokedLiveSession.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
     [DockerFact]
