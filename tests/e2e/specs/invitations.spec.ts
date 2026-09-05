@@ -12,7 +12,7 @@ test('owner invites a member who accepts and signs in', async ({ page, request }
   await page.getByLabel('Invite email').fill(memberEmail);
   await page.getByRole('button', { name: 'Send invitation' }).click();
   await expect(page.getByText(`Invitation sent to ${memberEmail}.`)).toBeVisible();
-  await expect(page.getByText(memberEmail)).toBeVisible();
+  await expect(page.locator('li', { hasText: memberEmail })).toBeVisible();
 
   const token = await mailpitToken(request, memberEmail);
   await page.goto('/invitations/accept');
@@ -20,6 +20,8 @@ test('owner invites a member who accepts and signs in', async ({ page, request }
   await page.getByLabel(/Your name/).fill('Member');
   await page.getByLabel(/^Password/).fill(PASSWORD);
   await page.getByRole('button', { name: 'Join workspace' }).click();
+  // Accepting navigates to /login on success; wait so a later page.goto cannot abort the request.
+  await page.waitForURL('**/login');
 
   await loginAs(request, workspace, memberEmail, page);
   await expect(page.getByRole('heading', { name: 'Conversations' })).toBeVisible();
@@ -36,7 +38,7 @@ test('owner can promote a member and deactivate and reactivate them', async ({ p
   // Invite and accept over the API so the team has a second member.
   const invite = await request.post(`${API}/api/v1/invitations`, {
     headers: { Authorization: `Bearer ${await loginAs(request, workspace, ownerEmail)}` },
-    data: { email: memberEmail, role: 'Agent' },
+    data: { email: memberEmail, role: 2 }, // Agent (API serializes UserRole numerically)
   });
   expect(invite.ok()).toBeTruthy();
   const token = await mailpitToken(request, memberEmail);
@@ -63,7 +65,7 @@ test('revoked invitations can no longer be accepted', async ({ page, request }) 
 
   const invite = await request.post(`${API}/api/v1/invitations`, {
     headers: { Authorization: `Bearer ${ownerToken}` },
-    data: { email: memberEmail, role: 'Agent' },
+    data: { email: memberEmail, role: 2 }, // Agent (numeric enum on the wire)
   });
   expect(invite.ok()).toBeTruthy();
   const invitationId = (await invite.json()).id as string;

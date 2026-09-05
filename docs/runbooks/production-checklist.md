@@ -2,6 +2,12 @@
 
 Complete every item before pointing real WhatsApp traffic at a deployment. Keep the evidence with the release notes.
 
+> Record results in `docs/releases/whatsapp-production-acceptance.md` (dates,
+> environment identifiers without secrets, command/test summaries,
+> webhook/provider request IDs, backup/restore timings, image digests, rollback
+> tag, approver, unresolved observations). An item is not done until its
+> evidence row exists there.
+
 ## 1. Staging test number
 
 Connect the staging WhatsApp test number through the Embedded Signup wizard (`/channels`). Confirm the channel row shows `connected`, exactly one `ProviderRoute` exists for its `phone_number_id`, and `channel.updated` was published. Send a message from the test handset and reply from the inbox; both directions must appear in the timeline.
@@ -20,7 +26,7 @@ Take a Postgres base backup plus WAL archives (`backup-recovery.md`), restore in
 
 ## 5. Fake-provider rejection proof
 
-With `ASPNETCORE_ENVIRONMENT=Production`, startup must refuse `WHATSAPP_USE_FAKE=true` and refuse missing `WhatsApp:AppSecret`, `WhatsApp:VerifyToken`, `Credentials:MasterKey` (32-byte base64), and `Jwt:SigningKey` (32+ chars). Proof: `RejectUnsafeProductionConfiguration` throws on each case in a staging boot test.
+With `ASPNETCORE_ENVIRONMENT=Production`, startup must refuse `WHATSAPP_USE_FAKE=true` and refuse missing `WhatsApp:AppSecret`, `WhatsApp:VerifyToken`, `Credentials:MasterKey` (32-byte base64), and `Jwt:SigningKey` (32+ chars). Proof: `ProductionGuard.Validate` throws on each case in a staging boot test (`ProductionConfigurationTests`, run explicitly in CI as `production-guards`).
 
 ## 6. Documented rollback
 

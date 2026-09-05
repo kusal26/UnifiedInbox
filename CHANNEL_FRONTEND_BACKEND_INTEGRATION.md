@@ -1,5 +1,12 @@
 Social Channel Integration Guide: Frontend–Backend
 
+> **Scope note (WhatsApp production):** this document is future-channel
+> reference only. It describes the shared adapter vision for Messenger,
+> Instagram, WhatsApp, and TikTok. The current production release covers
+> **WhatsApp only**; Messenger/Instagram/TikTok sections are non-normative
+> until their adapters land. WhatsApp behavior is normatively defined by the
+> API, `docs/COMPLETION_PLAN.md`, and `docs/runbooks/production-checklist.md`.
+
 Product: Unified Multi-Channel Inbox SaaS
 Channels: Facebook Messenger, Instagram Direct, WhatsApp Business (Meta), TikTok Direct Messages (TikTok Business Messaging API)
 Frontend target: React, TypeScript, Vite, TanStack Query, SignalR client

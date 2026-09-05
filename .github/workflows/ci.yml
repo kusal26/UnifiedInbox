@@ -7,6 +7,7 @@ on:
 env:
   DOTNET_NOLOGO: true
   RUN_DOCKER_TESTS: true
+  FAIL_ON_SKIPPED: true
 
 jobs:
   backend:
@@ -49,31 +50,60 @@ jobs:
       - run: docker build -f src/backend/UnifiedInbox.Worker/Dockerfile -t unified-inbox-worker:ci .
       - run: docker build -f src/frontend/Dockerfile -t unified-inbox-frontend:ci .
 
+  production-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet restore UnifiedInbox.slnx
+      - run: dotnet build UnifiedInbox.slnx --no-restore --warnaserror
+      - name: production boot gates (negative + positive)
+        run: dotnet test tests/UnifiedInbox.Api.Tests --no-build --filter FullyQualifiedName~ProductionConfigurationTests --logger "console;verbosity=normal"
+      - name: compose config gate
+        run: docker compose config --quiet
+
   compose-empty-db:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
-      - run: docker compose up -d --build migrator postgres rabbitmq redis minio
-      - run: docker compose run --rm migrator
-        env: { COMPOSE_MENU: 'false' }
-      - run: |
+      - run: docker compose config --quiet
+      - run: docker compose down -v
+      - name: boot Compose from an empty volume (migrator runs before api/worker start)
+        run: docker compose up -d --build
+      - name: wait for database and api readiness
+        run: |
           for attempt in $(seq 1 30); do
             docker compose exec -T postgres pg_isready -U unified_inbox && break
             sleep 2
           done
           docker compose exec -T postgres psql -U unified_inbox -d unified_inbox -c "SELECT count(*) FROM \"Users\";"
+          for attempt in $(seq 1 40); do
+            curl -sf http://localhost:8080/api/v1/operations/ready && break
+            sleep 5
+          done
+          curl -sf http://localhost:8080/api/v1/operations/ready
+      - name: register -> verify -> login and webhook -> inbox smoke
+        run: python3 scripts/ci-smoke.py
       - run: docker compose down -v
+        if: always()
 
   e2e:
     runs-on: ubuntu-latest
-    needs: [backend, frontend, containers]
+    needs: [backend, frontend, containers, production-guards, compose-empty-db]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: cp .env.example .env
       - run: docker compose up -d --build
-      - run: docker compose exec -T api sh -c "wget -qO- http://localhost:8080/api/v1/operations/ready || exit 1"
+      - name: wait for the stack to be ready
+        run: |
+          for attempt in $(seq 1 40); do
+            curl -sf http://localhost:8080/api/v1/operations/ready && break
+            sleep 5
+          done
+          curl -sf http://localhost:8080/api/v1/operations/ready
       - uses: microsoft/playwright-github-action@v1
       - run: bun install --cwd tests/e2e
       - run: bunx --cwd tests/e2e playwright test

@@ -1,5 +1,5 @@
 import { request, type Fetcher } from './client';
-import { normalizeRole, type UserRole } from './auth';
+import { normalizeRole, userRoles, type UserRole } from './auth';
 
 export interface TeamMember { id: string; displayName: string; email: string; role: UserRole; isActive: boolean }
 export interface Invitation { id: string; email: string; role: UserRole; expiresAt: string; createdAt: string }
@@ -36,6 +36,9 @@ export interface ChannelHealthEntry { id: string; channelId: string; isHealthy: 
 type ApiMember = Omit<TeamMember, 'role'> & { role: number | UserRole };
 type ApiInvitation = Omit<Invitation, 'role'> & { role: number | UserRole };
 
+// The API serializes the UserRole enum numerically (0=Owner, 1=Admin, 2=Agent).
+const roleIndex = (role: UserRole): number => userRoles.indexOf(role) as number;
+
 export function createAdminApi(getToken: () => string | null, fetcher: Fetcher = fetch) {
   const headers = (): HeadersInit => {
     const token = getToken();
@@ -44,10 +47,10 @@ export function createAdminApi(getToken: () => string | null, fetcher: Fetcher =
   const endpoint = (path: string) => `/api/v1${path}`;
   return {
     users: () => request<ApiMember[]>(fetcher, endpoint('/users'), { headers: headers() }).then((items) => items.map((m) => ({ ...m, role: normalizeRole(m.role) }))),
-    setRole: (id: string, role: UserRole) => request<ApiMember>(fetcher, endpoint(`/users/${id}/role`), { method: 'PUT', headers: headers(), body: { role } }).then((m) => ({ ...m, role: normalizeRole(m.role) })),
+    setRole: (id: string, role: UserRole) => request<ApiMember>(fetcher, endpoint(`/users/${id}/role`), { method: 'PUT', headers: headers(), body: { role: roleIndex(role) } }).then((m) => ({ ...m, role: normalizeRole(m.role) })),
     setActive: (id: string, isActive: boolean) => request<ApiMember>(fetcher, endpoint(`/users/${id}/active`), { method: 'PUT', headers: headers(), body: { isActive } }).then((m) => ({ ...m, role: normalizeRole(m.role) })),
     invitations: () => request<ApiInvitation[]>(fetcher, endpoint('/invitations'), { headers: headers() }).then((items) => items.map((i) => ({ ...i, role: normalizeRole(i.role) }))),
-    invite: (email: string, role: UserRole) => request<ApiInvitation>(fetcher, endpoint('/invitations'), { method: 'POST', headers: headers(), body: { email, role } }).then((i) => ({ ...i, role: normalizeRole(i.role) })),
+    invite: (email: string, role: UserRole) => request<ApiInvitation>(fetcher, endpoint('/invitations'), { method: 'POST', headers: headers(), body: { email, role: roleIndex(role) } }).then((i) => ({ ...i, role: normalizeRole(i.role) })),
     acceptInvitation: (token: string, displayName: string, password: string) => request<{ accepted: boolean }>(fetcher, endpoint('/invitations/accept'), { method: 'POST', body: { token, displayName, password } }),
     revokeInvitation: (id: string) => request<void>(fetcher, endpoint(`/invitations/${id}`), { method: 'DELETE', headers: headers() }),
     channels: () => request<ManagedChannel[]>(fetcher, endpoint('/channels'), { headers: headers() }),

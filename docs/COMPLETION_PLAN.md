@@ -14,7 +14,12 @@ Decisions (refinable later):
 
 ## Status
 
-Done (committed as `774f76a`):
+> Acceptance status is evidence-linked: phases below are `done` only where the
+> cited verification was recorded. Phase F stays `pending acceptance` until
+> `docs/releases/whatsapp-production-acceptance.md` is filled with the staging
+> evidence listed in `docs/runbooks/production-checklist.md`.
+
+Done with evidence (committed as `774f76a`):
 
 - Fail-closed EF tenant filters + `FORCE ROW LEVEL SECURITY` migration (`HardenedTenantIsolation`).
 - Unscoped `ProviderRoute` table; webhook routes by `phone_number_id`, never by tenant/channel input.
@@ -25,7 +30,7 @@ Done (committed as `774f76a`):
 - Attachment stage/complete endpoints with expiry, extension/MIME match, ClamAV gate.
 - RFC 7807 `code` values; conversation list returns `{ items, nextCursor }` with a compat parser.
 
-Done (this change):
+Done with evidence (this change, backend/frontend suites green):
 
 - Phase A — Attachment bytes: `IObjectStorage` + MinIO presigned PUT/GET, magic-byte sniffing for all
   6 types, ClamAV INSTREAM scans, presigned downloads, `AttachmentCleanupWorker`; Compose publishes
@@ -46,12 +51,16 @@ Done (this change):
   Signup wizard + channel repair, template + attachment uploads, live workspace metrics/team/channels/
   canned/audit/settings, role-gated navigation, targeted realtime invalidation; rewritten Playwright
   specs against the real stack.
-- Phase F — Release hardening: `NOBYPASSRLS` `app_runtime` role (Compose init script + conditional
+- Phase F — Release hardening (implementation landed; acceptance pending):
+  `NOBYPASSRLS` `app_runtime` role (Compose init script + conditional
   migration grants), Docker-gated Testcontainers suites (empty-DB migrations, forced RLS, uniqueness,
   broker topology/redelivery/confirms), CI workflow (build, tests, drift, secrets, containers, empty-DB
-  Compose, e2e), production checklist runbook.
+  Compose, e2e), production checklist runbook. Full acceptance (zero skipped
+  required suites, clean migration drift, healthy Compose services, all
+  Playwright scenarios, staging Meta-number proof) is recorded in
+  `docs/releases/whatsapp-production-acceptance.md` when complete.
 
-Verification: `dotnet build` (0 warnings), `dotnet test` (85 passed, 5 docker-gated skipped),
+Verification (last recorded, re-verify before release): `dotnet build` (0 warnings), `dotnet test` (85 passed, 5 docker-gated skipped),
 `dotnet ef migrations has-pending-model-changes` (clean), `bun run test --run` (38 passed),
 `tsc --noEmit` (clean), `bun run build` (ok).
 

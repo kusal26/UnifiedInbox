@@ -149,7 +149,7 @@ public sealed class AuthenticationService(InboxDbContext db, IPasswordHasher<Use
     public async Task<IReadOnlyList<SessionInfo>> SessionsAsync(CancellationToken token)
     {
         if (currentTenant.UserId is not { } userId) throw new UnauthorizedAccessException();
-        return await db.RefreshTokens.Where(x => x.UserId == userId && x.ExpiresAt > DateTimeOffset.UtcNow).OrderByDescending(x => x.CreatedAt).Select(x => new SessionInfo(x.Id, x.CreatedAt, x.ExpiresAt, false)).ToListAsync(token);
+        return await db.RefreshTokens.Where(x => x.UserId == userId && x.ExpiresAt > DateTimeOffset.UtcNow && x.RevokedAt == null).OrderByDescending(x => x.CreatedAt).Select(x => new SessionInfo(x.Id, x.CreatedAt, x.ExpiresAt, false)).ToListAsync(token);
     }
 
     public async Task RevokeSessionAsync(Guid sessionId, CancellationToken token)

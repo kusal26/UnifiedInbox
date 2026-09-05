@@ -8,7 +8,7 @@ A tenant-isolated shared inbox built with .NET 10, PostgreSQL, RabbitMQ, Redis/S
 2. Run `docker compose up --build`.
 3. Open `http://localhost:8080`. In Development only, the seed owner is `acme` / `owner@acme.test` / `Development!123`.
 
-The API and worker apply EF migrations on startup. Development data and the fake WhatsApp adapter are enabled only when explicitly configured for Development/Test. Set `WHATSAPP_USE_FAKE=false`, configure the Graph credentials through the channel flow, and set `WHATSAPP_APP_SECRET` before receiving production traffic.
+The dedicated one-shot `migrator` service is the only process that applies EF migrations. The API and worker never migrate on startup; they require the migrator to have completed successfully (see `docker-compose.yml` `depends_on: migrator: service_completed_successfully`). Development data and the fake WhatsApp adapter are enabled only when explicitly configured for Development/Test. Set `WHATSAPP_USE_FAKE=false`, configure the Graph credentials through the channel flow, and set `WHATSAPP_APP_SECRET` before receiving production traffic.
 
 ## Security model
 

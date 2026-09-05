@@ -22,7 +22,8 @@ export function App() {
 }
 
 function ProtectedApp() {
-  const { token, logout } = useAuth();
+  const { token, ready, logout } = useAuth();
+  if (!ready) return null;
   if (!token) return <Navigate to="/login" replace />;
   return <AppShell onLogout={logout}><RealtimeBridge token={token} /><Routes>
     <Route path="/" element={<InboxPage />} />

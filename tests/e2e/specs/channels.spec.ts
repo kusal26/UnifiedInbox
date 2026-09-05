@@ -30,7 +30,7 @@ test('agents do not see the connect-a-channel controls', async ({ page, request 
   const ownerToken = await loginAs(request, workspace, ownerEmail);
   const invite = await request.post(`${API}/api/v1/invitations`, {
     headers: { Authorization: `Bearer ${ownerToken}` },
-    data: { email: agentEmail, role: 'Agent' },
+    data: { email: agentEmail, role: 2 }, // Agent (numeric enum on the wire)
   });
   expect(invite.ok()).toBeTruthy();
   const token = await mailpitToken(request, agentEmail);
