@@ -7,9 +7,11 @@ export function Dialog({ title, onClose, children, className = '' }: PropsWithCh
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const node = ref.current;
-    // jsdom (unit tests) has no native dialog methods; the browser path stays native.
+    // Native modal where supported; the open attribute only ever applies as a
+    // fallback for agents without dialog support (unit tests, old browsers).
     if (node && typeof node.showModal === 'function' && !node.open) node.showModal();
-    return () => { if (node && typeof node.close === 'function' && node.open) node.close(); previous?.focus?.(); };
+    else node?.setAttribute('open', '');
+    return () => { if (node && typeof node.close === 'function' && node.open) node.close(); node?.removeAttribute('open'); previous?.focus?.(); };
   }, []);
   return <dialog ref={ref} className={`dialog ${className}`} aria-labelledby={titleId} onCancel={onClose} onClick={event => { if (event.target === ref.current) onClose(); }}>
     <div className="dialog-surface"><header className="dialog-header"><h2 id={titleId}>{title}</h2><button type="button" className="icon-button" aria-label={`Close ${title}`} onClick={onClose}>×</button></header>{children}</div>

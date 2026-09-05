@@ -52,6 +52,7 @@ export function ChannelsPage() {
   const [error, setError] = useState('');
   const [testingId, setTestingId] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
   const action = useAction();
   const confirmation = useConfirmation();
 
@@ -79,6 +80,7 @@ export function ChannelsPage() {
       setError(err instanceof Error ? err.message : 'The connection could not be completed. Try again.');
     } finally {
       setCompleting(false);
+      setConnectOpen(false);
     }
   };
   const test = async (id: string) => {
@@ -91,18 +93,18 @@ export function ChannelsPage() {
     confirmation.ask('Disconnect channel?', `Disconnect ${query.data?.find(channel => channel.id === id)?.displayName || 'this channel'}? Message history is retained.`, () => { void action.run(async () => { await admin.disconnectChannel(id); await queryClient.invalidateQueries({ queryKey: ['channels'] }); }, 'Channel disconnected.'); });
   };
 
-  return <WorkspacePage title="Channels">
+  return <WorkspacePage title="Channels" actions={canAdmin(user) && <button className="primary" onClick={() => { setWizard(null); setConnectOpen(true); }}>Connect channel</button>}>
     {action.feedback}{confirmation.dialog}
-    <LoadState query={query}>{query.data && (query.data.length ? <div className="channel-grid">{query.data.map((channel) => <ChannelCard key={channel.id} channel={channel} testing={testingId === channel.id} busy={action.pending} onTest={() => test(channel.id)} onToggle={(enabled) => toggle(channel.id, enabled)} onDisconnect={() => disconnect(channel.id)} />)}</div> : <div className="empty-state"><h2>Connect your first channel</h2><p>Add a WhatsApp number below to start receiving customer messages.</p></div>)}</LoadState>
-    {canAdmin(user) && <section className="workspace-card"><h2>Connect a WhatsApp number</h2>
+    <LoadState query={query}>{query.data && (query.data.length ? <div className="channel-grid">{query.data.map((channel) => <ChannelCard key={channel.id} channel={channel} testing={testingId === channel.id} busy={action.pending} onTest={() => test(channel.id)} onToggle={(enabled) => toggle(channel.id, enabled)} onDisconnect={() => disconnect(channel.id)} />)}</div> : <div className="empty-state"><h2>Connect your first channel</h2><p>{canAdmin(user) ? 'Choose Connect channel to add a WhatsApp number and start receiving customer messages.' : 'No channels are connected yet. Ask an admin to connect a WhatsApp number.'}</p></div>)}</LoadState>
+    {canAdmin(user) && connectOpen && <Dialog title="Connect a WhatsApp number" onClose={() => setConnectOpen(false)}>
       {!wizard
-        ? <form onSubmit={begin}><p>Connect securely through Meta. Your team will receive messages in the shared inbox.</p><label>Display name<input aria-label="Channel display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required placeholder="e.g. Customer support" /></label><button type="submit" disabled={action.pending}>{action.pending ? 'Starting connection…' : 'Start Embedded Signup'}</button></form>
+        ? <form className="form-stack" onSubmit={begin}><p>Connect securely through Meta. Your team will receive messages in the shared inbox.</p><label>Display name<input aria-label="Channel display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required autoFocus placeholder="e.g. Customer support" /></label><div className="button-row"><button type="button" onClick={() => setConnectOpen(false)}>Cancel</button><button type="submit" disabled={action.pending}>{action.pending ? 'Starting connection…' : 'Start Embedded Signup'}</button></div></form>
         : <div>
             <p role="status">Complete Meta Embedded Signup in the popup. This attempt expires at {new Date(wizard.expiresAt).toLocaleTimeString()}.</p>
             {completing && <p role="status">Completing connection…</p>}
             <EmbeddedSignupButton attempt={wizard} onSession={(session) => void finish(session)} onError={setError} />
           </div>}
-    </section>}
+    </Dialog>}
     {result && <p role="status">{result}</p>}
     {error && <p role="alert">{error}</p>}
   </WorkspacePage>;
@@ -139,6 +141,7 @@ export function TeamPage() {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('Agent');
   const [notice, setNotice] = useState('');
+  const [inviteOpen, setInviteOpen] = useState(false);
   const action = useAction();
   const confirmation = useConfirmation();
 
@@ -146,20 +149,23 @@ export function TeamPage() {
   const invite = async (event: FormEvent) => {
     event.preventDefault();
     setNotice('');
-    await action.run(async () => { await admin.invite(email.trim(), role); setEmail(''); setNotice(`Invitation sent to ${email.trim()}.`); refresh(); });
+    await action.run(async () => { await admin.invite(email.trim(), role); setEmail(''); setNotice(`Invitation sent to ${email.trim()}.`); refresh(); setInviteOpen(false); });
   };
   const changeRole = async (id: string, next: UserRole) => { await action.run(async () => { await admin.setRole(id, next); refresh(); }, 'Role updated.'); };
   const changeActive = async (id: string, active: boolean) => { const perform = () => { void action.run(async () => { await admin.setActive(id, active); refresh(); }, 'Member access updated.'); }; if (active) perform(); else confirmation.ask('Deactivate member?', `${members.data?.find(member => member.id === id)?.email ?? 'This member'} will lose access to the workspace.`, perform); };
   const revoke = async (id: string) => { confirmation.ask('Revoke invitation?', `The invitation for ${invites.data?.find(invite => invite.id === id)?.email ?? 'this member'} will no longer work.`, () => { void action.run(async () => { await admin.revokeInvitation(id); refresh(); }, 'Invitation revoked.'); }); };
 
-  return <WorkspacePage title="Team">
+  return <WorkspacePage title="Team" actions={canAdmin(user) && <button className="primary" onClick={() => setInviteOpen(true)}>Invite member</button>}>
     {confirmation.dialog}
-    {canAdmin(user) && <form className="workspace-card" onSubmit={invite}><h2>Invite a member</h2>
-      <label>Email<input aria-label="Invite email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required aria-describedby={action.error ? 'team-error' : undefined} /></label>
-      <label>Role<select aria-label="Invite role" value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="Agent">Agent</option><option value="Admin">Admin</option>{isOwner(user) && <option value="Owner">Owner</option>}</select></label>
-      <p className="field-help">Agents respond to customers. Admins also manage channels and workspace settings.</p>
-      <button type="submit" disabled={action.pending}>{action.pending ? 'Working…' : 'Send invitation'}</button></form>}
-    <div id="team-error">{action.feedback}</div>
+    {canAdmin(user) && inviteOpen && <Dialog title="Invite a member" onClose={() => setInviteOpen(false)}>
+      <form className="form-stack" onSubmit={invite}>
+        <label>Email<input aria-label="Invite email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoFocus aria-describedby={action.error ? 'team-error' : undefined} /></label>
+        <label>Role<select aria-label="Invite role" value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="Agent">Agent</option><option value="Admin">Admin</option>{isOwner(user) && <option value="Owner">Owner</option>}</select></label>
+        <p className="field-help">Agents respond to customers. Admins also manage channels and workspace settings.</p>
+        <div className="button-row"><button type="button" onClick={() => setInviteOpen(false)}>Cancel</button><button type="submit" disabled={action.pending}>{action.pending ? 'Working…' : 'Send invitation'}</button></div>
+        <div id="team-error">{action.feedback}</div>
+      </form>
+    </Dialog>}
     {notice && <p role="status">{notice}</p>}
     <LoadState query={members}>{members.data && <div className="table-wrap" role="region" aria-label="Team members" tabIndex={0}><table><thead><tr><th>Member</th><th>Role</th><th>Status</th>{canAdmin(user) && <th>Actions</th>}</tr></thead><tbody>
       {members.data.map((member) => <tr key={member.id}><td><strong>{member.displayName}</strong><br /><small>{member.email}</small></td>
@@ -175,14 +181,18 @@ export function CannedPage() {
   const [search, setSearch] = useState(''); const { token } = useAuth(); const client = useQueryClient();
   const query = useApi<Canned[]>(`/canned-responses${search ? `?q=${encodeURIComponent(search)}` : ''}`, ['canned', search]);
   const [editing, setEditing] = useState<Canned | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const confirmation = useConfirmation();
   const create = useMutation({ mutationFn: (data: Omit<Canned, 'id'>) => request<Canned>(fetch, '/api/v1/canned-responses', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: data }), onSuccess: () => client.invalidateQueries({ queryKey: ['canned'] }) });
   const update = useMutation({ mutationFn: (data: Canned) => request<Canned>(fetch, `/api/v1/canned-responses/${data.id}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: data }), onSuccess: () => { setEditing(null); client.invalidateQueries({ queryKey: ['canned'] }); } });
   const remove = useMutation({ mutationFn: (id: string) => request<void>(fetch, `/api/v1/canned-responses/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }), onSuccess: () => client.invalidateQueries({ queryKey: ['canned'] }) });
-  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); create.mutate({ title: String(data.get('title')), shortcut: String(data.get('shortcut')), content: String(data.get('content')) }, { onSuccess: () => form.reset() }); };
-  return <WorkspacePage title="Canned Responses"><label>Search responses<input aria-label="Search responses" value={search} onChange={event => setSearch(event.target.value)} /></label>
+  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); create.mutate({ title: String(data.get('title')), shortcut: String(data.get('shortcut')), content: String(data.get('content')) }, { onSuccess: () => { form.reset(); setCreateOpen(false); } }); };
+  return <WorkspacePage title="Canned Responses" actions={<button className="primary" onClick={() => { create.reset(); setCreateOpen(true); }}>New response</button>}><label>Search responses<input aria-label="Search responses" value={search} onChange={event => setSearch(event.target.value)} /></label>
     {confirmation.dialog}
-    <form className="workspace-card" onSubmit={submit}><h2>New response</h2><div className="form-grid"><label>Title<input name="title" aria-label="Title" required placeholder="Welcome" /></label><label>Shortcut<input name="shortcut" aria-label="Shortcut" required placeholder="/welcome" /></label></div><label>Message content<textarea name="content" aria-label="Content" required placeholder="Write a message your team can reuse…" /></label><p className="field-help">Saved responses are available to your team in the message composer.</p><button type="submit" disabled={create.isPending}>{create.isPending ? 'Creating…' : 'Create response'}</button>{create.isError && <p role="alert">{create.error.message}</p>}{create.isSuccess && <p role="status">Response created.</p>}</form>
+    {createOpen && <Dialog title="New response" onClose={() => setCreateOpen(false)}>
+      <form className="form-stack" onSubmit={submit}><div className="form-grid"><label>Title<input name="title" aria-label="Title" required autoFocus placeholder="Welcome" /></label><label>Shortcut<input name="shortcut" aria-label="Shortcut" required placeholder="/welcome" /></label></div><label>Message content<textarea name="content" aria-label="Content" required placeholder="Write a message your team can reuse…" /></label><p className="field-help">Saved responses are available to your team in the message composer.</p><div className="button-row"><button type="button" onClick={() => setCreateOpen(false)}>Cancel</button><button type="submit" disabled={create.isPending}>{create.isPending ? 'Creating…' : 'Create response'}</button></div>{create.isError && <p role="alert">{create.error.message}</p>}</form>
+    </Dialog>}
+    {create.isSuccess && <p role="status">Response created.</p>}
     {update.isError && <p role="alert">{update.error.message}</p>}{remove.isError && <p role="alert">{remove.error.message}</p>}
     {remove.isSuccess && <p role="status">Response deleted.</p>}
     {query.data?.length === 0 && <div className="empty-state"><h2>{search ? 'No matching responses' : 'No saved responses yet'}</h2><p>{search ? 'Try a different search.' : 'Create your first reusable reply above.'}</p></div>}
@@ -248,4 +258,4 @@ export function NotificationsPage() {
 
 export function LoadState({ query, children }: { query: { isPending: boolean; isError: boolean; refetch?: () => unknown }; children: React.ReactNode }) { if (query.isPending) return <p role="status">Loading…</p>; if (query.isError) return <div role="alert"><p>This workspace data could not be loaded.</p>{query.refetch && <button onClick={() => query.refetch?.()}>Try again</button>}</div>; return children; }
 const pageDescriptions: Record<string, string> = { Overview: 'A shared view of your team’s workload and customer activity.', Channels: 'Manage the business accounts connected to your shared inbox.', Team: 'Manage workspace access and invite the people who support your customers.', 'Canned Responses': 'Keep common answers consistent. Create replies your whole team can reuse.', 'Audit Log': 'Review activity and changes across your workspace.', 'Workspace Settings': 'Manage your workspace identity and data retention.', Notifications: 'Stay up to date with customer activity and the health of your channels.' };
-export function WorkspacePage({ title, children }: { title: string; children: React.ReactNode }) { return <section className="workspace-page"><header className="page-header"><p className="eyebrow">Workspace</p><h1>{title}</h1>{pageDescriptions[title] && <p>{pageDescriptions[title]}</p>}</header>{children}</section>; }
+export function WorkspacePage({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) { return <section className="workspace-page"><header className={`page-header${actions ? ' has-actions' : ''}`}><div><p className="eyebrow">Workspace</p><h1>{title}</h1>{pageDescriptions[title] && <p>{pageDescriptions[title]}</p>}</div>{actions && <div className="page-actions">{actions}</div>}</header>{children}</section>; }

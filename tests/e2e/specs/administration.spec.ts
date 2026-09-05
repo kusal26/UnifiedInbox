@@ -8,6 +8,7 @@ test('owner manages canned responses end to end', async ({ page, request }) => {
   await loginAs(request, workspace, email, page);
 
   await page.getByRole('link', { name: 'Canned Responses' }).click();
+  await page.getByRole('button', { name: 'New response' }).click();
   await page.getByLabel('Title').fill('Shipping update');
   await page.getByLabel('Shortcut').fill('/shipping');
   await page.getByLabel('Content').fill('Your order shipped today.');

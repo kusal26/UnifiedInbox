@@ -11,6 +11,7 @@ test('the channels page starts Meta Embedded Signup with no manual credential fi
   await expect(page.getByRole('heading', { name: 'Channels' })).toBeVisible();
 
   // Completing the wizard is a server + Meta popup flow; starting it surfaces the SDK handshake.
+  await page.getByRole('button', { name: 'Connect channel' }).click();
   await page.getByLabel('Channel display name').fill('Sales line');
   await page.getByRole('button', { name: 'Start Embedded Signup' }).click();
   await expect(page.getByText(/Complete Meta Embedded Signup in the popup/)).toBeVisible();

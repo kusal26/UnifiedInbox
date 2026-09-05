@@ -9,6 +9,7 @@ test('owner invites a member who accepts and signs in', async ({ page, request }
   await loginAs(request, workspace, ownerEmail, page);
 
   await page.getByRole('link', { name: 'Team' }).click();
+  await page.getByRole('button', { name: 'Invite member' }).click();
   await page.getByLabel('Invite email').fill(memberEmail);
   await page.getByRole('button', { name: 'Send invitation' }).click();
   await expect(page.getByText(`Invitation sent to ${memberEmail}.`)).toBeVisible();

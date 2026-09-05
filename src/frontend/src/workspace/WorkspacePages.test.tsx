@@ -42,6 +42,7 @@ describe('TeamPage', () => {
       return new Response(JSON.stringify(String(url).endsWith('/me') ? me : []));
     }) as typeof fetch;
     renderWorkspace(<TeamPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Invite member' }));
     await userEvent.type(await screen.findByLabelText('Invite email'), 'retry@x.test');
     await userEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Invitation could not be sent.');
@@ -56,6 +57,7 @@ describe('TeamPage', () => {
     });
     renderWorkspace(<TeamPage />);
 
+    await userEvent.click(await screen.findByRole('button', { name: 'Invite member' }));
     await userEvent.type(await screen.findByLabelText('Invite email'), 'c@x.test');
     await userEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/invitations', expect.objectContaining({ method: 'POST' })));
@@ -71,6 +73,7 @@ describe('Canned response recovery', () => {
       return new Response('[]');
     }) as typeof fetch;
     renderWorkspace(<CannedPage />);
+    await userEvent.click(screen.getByRole('button', { name: 'New response' }));
     await userEvent.type(screen.getByLabelText('Title'), 'Welcome');
     await userEvent.type(screen.getByLabelText('Shortcut'), '/welcome');
     await userEvent.type(screen.getByLabelText('Content'), 'Hello there');
@@ -80,6 +83,7 @@ describe('Canned response recovery', () => {
     fail = false;
     await userEvent.click(screen.getByRole('button', { name: 'Create response' }));
     await screen.findByText('Response created.');
+    await userEvent.click(screen.getByRole('button', { name: 'New response' }));
     expect(screen.getByLabelText('Content')).toHaveValue('');
   });
 });
@@ -101,6 +105,7 @@ describe('ChannelsPage', () => {
     }) as typeof fetch;
     renderWorkspace(<ChannelsPage />);
 
+    await userEvent.click(await screen.findByRole('button', { name: 'Connect channel' }));
     await userEvent.type(await screen.findByLabelText('Channel display name'), 'Sales');
     await userEvent.click(screen.getByRole('button', { name: 'Start Embedded Signup' }));
 
@@ -131,6 +136,7 @@ describe('ChannelsPage', () => {
     }) as typeof fetch;
     renderWorkspace(<ChannelsPage />);
 
+    await userEvent.click(await screen.findByRole('button', { name: 'Connect channel' }));
     await userEvent.type(await screen.findByLabelText('Channel display name'), 'Sales');
     await userEvent.click(screen.getByRole('button', { name: 'Start Embedded Signup' }));
     await screen.findByText(/Complete Meta Embedded Signup in the popup/);
