@@ -51,6 +51,7 @@ test('owner can promote a member and deactivate and reactivate them', async ({ p
   await page.getByRole('link', { name: 'Team' }).click();
   const memberRow = page.locator('tr').filter({ hasText: memberEmail });
   await memberRow.getByRole('button', { name: 'Deactivate' }).click();
+  await page.getByRole('button', { name: 'Confirm' }).click();
   await expect(memberRow.getByText('Disabled')).toBeVisible();
   await memberRow.getByRole('button', { name: 'Reactivate' }).click();
   await expect(memberRow.getByText('Active')).toBeVisible();

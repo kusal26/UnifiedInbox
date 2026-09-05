@@ -264,3 +264,9 @@ Verified: `bunx tsc --noEmit` clean, `bun run test --run` 54/54,
 in the dialog and survives Escape; `?q=hello` deep-link fills search with the
 no-match recovery state; Team Revoke renders enabled-at-idle with zero
 overflow.
+
+2026-09-05 e2e follow-through: the confirmation dialogs and human-readable
+notification labels broke 3 Playwright specs (canned delete, member
+deactivate, preference toggle). Specs updated to the intended UX (click
+Confirm; match `Message delivery failures`). Full suite against the compose
+stack: 15 passed, 3 skipped (env-gated WhatsApp staging), 0 failed.

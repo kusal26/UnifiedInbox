@@ -20,6 +20,7 @@ test('owner manages canned responses end to end', async ({ page, request }) => {
   await expect(page.getByText('Your order shipped and is on its way.')).toBeVisible();
 
   await page.getByRole('button', { name: 'Delete' }).click();
+  await page.getByRole('button', { name: 'Confirm' }).click();
   await expect(page.getByText('Shipping update')).toHaveCount(0);
 });
 
@@ -48,7 +49,7 @@ test('owner can toggle notification preferences', async ({ page, request }) => {
   await page.getByRole('link', { name: 'Notifications' }).click();
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
 
-  const row = page.locator('li', { hasText: 'message.failed' });
+  const row = page.locator('li', { hasText: 'Message delivery failures' });
   await row.getByRole('button', { name: 'Disable' }).click();
   await expect(row.getByRole('button', { name: 'Enable' })).toBeVisible();
 });
