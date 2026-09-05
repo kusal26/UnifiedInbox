@@ -22,6 +22,7 @@ function useApi<T>(path: string, key: readonly unknown[], enabled = true) {
 }
 
 const roleLabel = (value: number | UserRole) => typeof value === 'number' ? ['Owner', 'Admin', 'Agent'][value] ?? 'Agent' : value;
+const roleBadgeClass = (value: number | UserRole) => { const label = roleLabel(value); return `role-badge${label === 'Owner' ? ' owner' : label === 'Admin' ? ' admin' : ''}`; };
 const eventLabels: Record<string, string> = { 'message.received': 'New customer messages', 'message.failed': 'Message delivery failures', 'channel.unhealthy': 'Channel connection issues', 'invitation.created': 'Team invitations', 'auth.login.succeeded': 'Signed in', 'auth.email.verified': 'Email verified', 'tenant.registered': 'Workspace created', 'canned-response.created': 'Saved response created' };
 const eventLabel = (kind: string) => eventLabels[kind] ?? kind.replace(/[._-]/g, ' ').replace(/^./, c => c.toUpperCase());
 
@@ -191,7 +192,7 @@ export function TeamPage() {
     {notice && <p role="status">{notice}</p>}
     <LoadState query={members}>{members.data && <div className="table-wrap" role="region" aria-label="Team members" tabIndex={0}><table><thead><tr><th>Member</th><th>Role</th><th>Status</th>{canAdmin(user) && <th>Actions</th>}</tr></thead><tbody>
       {members.data.map((member) => <tr key={member.id}><td><strong>{member.displayName}</strong><br /><small>{member.email}</small></td>
-        <td>{isOwner(user) && member.id !== user?.id ? <select disabled={action.pending} aria-label={`Role for ${member.email}`} value={roleLabel(member.role)} onChange={(event) => changeRole(member.id, event.target.value as UserRole)}><option value="Owner">Owner</option><option value="Admin">Admin</option><option value="Agent">Agent</option></select> : roleLabel(member.role)}</td>
+        <td>{isOwner(user) && member.id !== user?.id ? <select disabled={action.pending} aria-label={`Role for ${member.email}`} value={roleLabel(member.role)} onChange={(event) => changeRole(member.id, event.target.value as UserRole)}><option value="Owner">Owner</option><option value="Admin">Admin</option><option value="Agent">Agent</option></select> : <span className={roleBadgeClass(member.role)}>{roleLabel(member.role)}</span>}</td>
         <td><span className={member.isActive ? 'badge is-active' : 'badge is-disabled'}>{member.isActive ? 'Active' : 'Disabled'}</span></td>
         {canAdmin(user) && <td>{member.id !== user?.id && <button disabled={action.pending} className={member.isActive ? 'danger' : ''} onClick={() => changeActive(member.id, !member.isActive)}>{member.isActive ? 'Deactivate' : 'Reactivate'}</button>}</td>}</tr>)}
     </tbody></table></div>}</LoadState>

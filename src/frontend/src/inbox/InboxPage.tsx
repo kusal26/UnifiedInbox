@@ -217,7 +217,7 @@ function ThreadHeader({ conversation, onStatus, statusError, onBack, onDetails }
   useEffect(() => { if (open) menu.current?.querySelector<HTMLButtonElement>('button')?.focus(); }, [open]);
   return <header className="thread-header">
     <button className="mobile-back" onClick={onBack} aria-label="Back to conversations">←</button>
-    <div><h2 aria-label={`Conversation with ${conversation.contactName}`}>{conversation.contactName}</h2><p>{conversation.platform}</p></div>
+    <div><h2 aria-label={`Conversation with ${conversation.contactName}`}>{conversation.contactName}</h2><p><span className="badge is-info">{conversation.platform}</span></p></div>
     <div className="thread-actions"><button onClick={onDetails}>Customer details</button><div className="status-control" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
       <button ref={trigger} aria-haspopup="menu" aria-label={`Status: ${conversation.status}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>{conversation.status}</button>
       {open && <div ref={menu} role="menu" aria-label="Conversation status" onKeyDown={event => {
