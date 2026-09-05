@@ -209,21 +209,22 @@ export function CannedPage() {
   const create = useMutation({ mutationFn: (data: Omit<Canned, 'id'>) => request<Canned>(fetch, '/api/v1/canned-responses', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: data }), onSuccess: () => client.invalidateQueries({ queryKey: ['canned'] }) });
   const update = useMutation({ mutationFn: (data: Canned) => request<Canned>(fetch, `/api/v1/canned-responses/${data.id}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: data }), onSuccess: () => { setEditing(null); client.invalidateQueries({ queryKey: ['canned'] }); } });
   const remove = useMutation({ mutationFn: (id: string) => request<void>(fetch, `/api/v1/canned-responses/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }), onSuccess: () => client.invalidateQueries({ queryKey: ['canned'] }) });
+  const closeEditor = () => { setCreateOpen(false); setEditing(null); };
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); create.mutate({ title: String(data.get('title')), shortcut: String(data.get('shortcut')), content: String(data.get('content')) }, { onSuccess: () => { form.reset(); setCreateOpen(false); } }); };
-  return <WorkspacePage title="Canned Responses" actions={<button className="primary" onClick={() => { create.reset(); setCreateOpen(true); }}>New response</button>}><label>Search responses<input aria-label="Search responses" value={search} onChange={event => setSearch(event.target.value)} /></label>
+  return <WorkspacePage title="Canned Responses" actions={<button className="primary" onClick={() => { create.reset(); setEditing(null); setCreateOpen(true); }}>New response</button>}><label>Search responses<input aria-label="Search responses" value={search} onChange={event => setSearch(event.target.value)} /></label>
     {confirmation.dialog}
-    {createOpen && <Dialog title="New response" onClose={() => setCreateOpen(false)}>
-      <form className="form-stack" onSubmit={submit}><div className="form-grid"><label>Title<input name="title" aria-label="Title" required autoFocus placeholder="Welcome" /></label><label>Shortcut<input name="shortcut" aria-label="Shortcut" required placeholder="/welcome" /></label></div><label>Message content<textarea name="content" aria-label="Content" required placeholder="Write a message your team can reuse…" /></label><p className="field-help">Saved responses are available to your team in the message composer.</p><div className="button-row"><button type="button" onClick={() => setCreateOpen(false)}>Cancel</button><button type="submit" disabled={create.isPending}>{create.isPending ? 'Creating…' : 'Create response'}</button></div>{create.isError && <p role="alert">{create.error.message}</p>}</form>
+    {(createOpen || editing) && <Dialog title={editing ? `Edit ${editing.title}` : 'New response'} onClose={closeEditor}>
+      {editing
+        ? <CannedEditor item={editing} onChange={setEditing} onSave={() => editing && update.mutate(editing)} onCancel={closeEditor} saving={update.isPending} />
+        : <form className="form-stack" onSubmit={submit}><div className="form-grid"><label>Title<input name="title" aria-label="Title" required autoFocus placeholder="Welcome" /></label><label>Shortcut<input name="shortcut" aria-label="Shortcut" required placeholder="/welcome" /></label></div><label>Message content<textarea name="content" aria-label="Content" required placeholder="Write a message your team can reuse…" /></label><p className="field-help">Saved responses are available to your team in the message composer.</p><div className="button-row"><button type="button" onClick={closeEditor}>Cancel</button><button type="submit" disabled={create.isPending}>{create.isPending ? 'Creating…' : 'Create response'}</button></div>{create.isError && <p role="alert">{create.error.message}</p>}</form>}
     </Dialog>}
     {create.isSuccess && <p role="status">Response created.</p>}
     {update.isError && <p role="alert">{update.error.message}</p>}{remove.isError && <p role="alert">{remove.error.message}</p>}
     {remove.isSuccess && <p role="status">Response deleted.</p>}
-    {query.data?.length === 0 && <div className="empty-state"><h2>{search ? 'No matching responses' : 'No saved responses yet'}</h2><p>{search ? 'Try a different search.' : 'Create your first reusable reply above.'}</p></div>}
+    {query.data?.length === 0 && <div className="empty-state"><h2>{search ? 'No matching responses' : 'No saved responses yet'}</h2><p>{search ? 'Try a different search.' : 'Choose New response to create your first reusable reply.'}</p></div>}
     <LoadState query={query}>{query.data && <ul className="local-list">{query.data.map(item => <li key={item.id}>
-      {editing?.id === item.id
-        ? <CannedEditor item={editing} onChange={setEditing} onSave={() => update.mutate(editing)} onCancel={() => setEditing(null)} saving={update.isPending} />
-        : <span><strong>{item.title}</strong> <small>{item.shortcut}</small><br />{item.content}</span>}
-      {editing?.id !== item.id && <span className="button-row"><button onClick={() => { update.reset(); setEditing(item); }}>Edit</button><button className="danger" disabled={remove.isPending} onClick={() => confirmation.ask(`Delete ${item.title}?`, 'This response will be removed from the team composer. Existing messages will not change.', () => remove.mutate(item.id))}>Delete</button></span>}
+      <span><strong>{item.title}</strong> <small>{item.shortcut}</small><br />{item.content}</span>
+      <span className="button-row"><button onClick={() => { update.reset(); setCreateOpen(false); setEditing(item); }}>Edit</button><button className="danger" disabled={remove.isPending} onClick={() => confirmation.ask(`Delete ${item.title}?`, 'This response will be removed from the team composer. Existing messages will not change.', () => remove.mutate(item.id))}>Delete</button></span>
     </li>)}</ul>}</LoadState></WorkspacePage>;
 }
 

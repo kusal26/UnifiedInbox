@@ -86,6 +86,27 @@ describe('Canned response recovery', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New response' }));
     expect(screen.getByLabelText('Content')).toHaveValue('');
   });
+
+  it('edits a response in a dialog and closes it on save', async () => {
+    let store = [{ id: 'cr-1', title: 'Welcome', shortcut: '/welcome', content: 'Hello' }];
+    globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        store = [{ ...store[0], ...(JSON.parse(String(init.body)) as object) }];
+        return new Response(JSON.stringify(store[0]));
+      }
+      if (String(url).split('?')[0].endsWith('/canned-responses')) return new Response(JSON.stringify(store));
+      return new Response('[]');
+    }) as typeof fetch;
+    renderWorkspace(<CannedPage />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    expect(screen.getByLabelText('Edit content')).toHaveValue('Hello');
+    await userEvent.type(screen.getByLabelText('Edit content'), ' and welcome');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(screen.queryByLabelText('Edit content')).not.toBeInTheDocument());
+    expect(await screen.findByText('Hello and welcome')).toBeVisible();
+  });
 });
 
 describe('ChannelsPage', () => {
