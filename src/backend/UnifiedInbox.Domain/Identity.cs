@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace UnifiedInbox.Domain;
 
 public interface ITenantScoped { Guid TenantId { get; } }
@@ -22,9 +24,11 @@ public sealed class User : ITenantScoped
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public string Email { get; set; } = "";
+    [JsonIgnore]
     public string NormalizedEmail { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public UserRole Role { get; set; }
+    [JsonIgnore]
     public string PasswordHash { get; set; } = "";
     public bool IsActive { get; set; } = true;
     public DateTimeOffset? EmailVerifiedAt { get; set; }

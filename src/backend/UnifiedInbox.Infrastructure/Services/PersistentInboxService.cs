@@ -13,16 +13,40 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
     public async Task<ConversationPage> ListAsync(string? search, ConversationStatus? status, string? channel, bool unreadOnly, string? cursor, int pageSize, CancellationToken cancellationToken)
     {
         var take = Math.Clamp(pageSize, 1, 100);
-        var query = SummaryQuery();
-        if (status is not null) query = query.Where(x => x.Status == status);
-        if (!string.IsNullOrWhiteSpace(channel)) query = query.Where(x => x.Platform == channel);
-        if (unreadOnly) query = query.Where(x => x.Unread);
-        if (!string.IsNullOrWhiteSpace(search)) { var term = search.Trim().ToLower(); query = query.Where(x => x.ContactName.ToLower().Contains(term) || x.Preview.ToLower().Contains(term) || x.Platform.ToLower().Contains(term) || x.Id.ToString().Contains(term)); }
-        if (DecodeCursor(cursor) is { } before) query = query.Where(x => x.UpdatedAt < before);
-        var items = await query.OrderByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id).Take(take + 1).ToListAsync(cancellationToken);
-        var hasMore = items.Count > take; if (hasMore) items.RemoveAt(items.Count - 1);
+        var conversations = Filtered(db.Conversations, search, status, channel, unreadOnly, DecodeCursor(cursor));
+        // Order and paginate on the base entity before projecting: EF Core cannot translate
+        // ordering over the projected summary when that projection contains correlated subqueries
+        // under the tenant query filter (observed as a 500 on the live list endpoint).
+        var ids = await conversations
+            .OrderByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id)
+            .Take(take + 1)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var hasMore = ids.Count > take;
+        if (hasMore) ids.RemoveAt(ids.Count - 1);
+        var items = await ProjectSummaries(db.Conversations.Where(x => ids.Contains(x.Id)).OrderByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id)).ToListAsync(cancellationToken);
         return new(items, hasMore && items.Count > 0 ? EncodeCursor(items[^1].UpdatedAt) : null);
     }
+
+    private IQueryable<Conversation> Filtered(IQueryable<Conversation> query, string? search, ConversationStatus? status, string? channel, bool unreadOnly, DateTimeOffset? before)
+    {
+        if (status is not null) query = query.Where(x => x.Status == status);
+        if (!string.IsNullOrWhiteSpace(channel)) query = query.Where(x => db.Channels.Where(ch => ch.Id == x.ChannelId).Select(ch => ch.Platform).First() == channel);
+        if (unreadOnly) query = query.Where(x => db.Messages.Any(m => m.ConversationId == x.Id && m.Direction == MessageDirection.Inbound && m.Sequence > x.LastReadSequence));
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLower();
+            query = query.Where(x => db.Contacts.Where(p => p.Id == x.ContactId).Select(p => p.DisplayName).First().ToLower().Contains(term)
+                || (db.Messages.Where(m => m.ConversationId == x.Id).OrderByDescending(m => m.Sequence).Select(m => m.Body).FirstOrDefault() ?? "").ToLower().Contains(term)
+                || db.Channels.Where(ch => ch.Id == x.ChannelId).Select(ch => ch.Platform).First().ToLower().Contains(term)
+                || x.Id.ToString().Contains(term));
+        }
+        if (before is not null) query = query.Where(x => x.UpdatedAt < before);
+        return query;
+    }
+
+    private IQueryable<ConversationSummary> ProjectSummaries(IQueryable<Conversation> query) =>
+        query.Select(x => new ConversationSummary(x.Id, db.Contacts.Where(p => p.Id == x.ContactId).Select(p => p.DisplayName).First(), db.Channels.Where(ch => ch.Id == x.ChannelId).Select(ch => ch.Platform).First(), db.Messages.Where(m => m.ConversationId == x.Id).OrderByDescending(m => m.Sequence).Select(m => m.Body).FirstOrDefault() ?? "", x.Status, db.Messages.Any(m => m.ConversationId == x.Id && m.Direction == MessageDirection.Inbound && m.Sequence > x.LastReadSequence), x.UpdatedAt));
 
     public Task<ConversationDetails?> GetAsync(Guid id, CancellationToken cancellationToken) =>
         db.Conversations.Where(x => x.Id == id).Join(db.Contacts, c => c.ContactId, p => p.Id, (c, p) => new { c, p }).Join(db.Channels, x => x.c.ChannelId, ch => ch.Id,
@@ -32,9 +56,21 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
     {
         if (!await db.Conversations.AnyAsync(x => x.Id == id, cancellationToken)) return null;
         var take = Math.Clamp(pageSize, 1, 100);
-        var messages = db.Messages.Where(x => x.ConversationId == id && (before == null || x.Sequence < before)).Select(x => new ActivityItem(ActivityKind.Message, x.Id, id, x.Body, x.CreatedAt, x.Sequence, x.SenderUserId, x.Status));
-        var notes = db.InternalNotes.Where(x => x.ConversationId == id && (before == null || x.Sequence < before)).Select(x => new ActivityItem(ActivityKind.InternalNote, x.Id, id, x.Body, x.CreatedAt, x.Sequence, x.AuthorId, null));
-        var items = await messages.Concat(notes).OrderByDescending(x => x.Sequence).Take(take).ToListAsync(cancellationToken);
+        // Query each tenant-scoped timeline table with the shared per-conversation sequence, then
+        // merge in memory. A database-level UNION of projected messages + notes cannot be translated
+        // by EF Core when each side is projected under the tenant query filter, so we keep ordering
+        // entirely in the application after two bounded, ordered reads.
+        var messages = await db.Messages
+            .Where(x => x.ConversationId == id && (before == null || x.Sequence < before))
+            .OrderByDescending(x => x.Sequence).Take(take)
+            .Select(x => new ActivityItem(ActivityKind.Message, x.Id, id, x.Body, x.CreatedAt, x.Sequence, x.SenderUserId, x.Status))
+            .ToListAsync(cancellationToken);
+        var notes = await db.InternalNotes
+            .Where(x => x.ConversationId == id && (before == null || x.Sequence < before))
+            .OrderByDescending(x => x.Sequence).Take(take)
+            .Select(x => new ActivityItem(ActivityKind.InternalNote, x.Id, id, x.Body, x.CreatedAt, x.Sequence, x.AuthorId, null))
+            .ToListAsync(cancellationToken);
+        var items = messages.Concat(notes).OrderByDescending(x => x.Sequence).Take(take).ToList();
         return new(items, items.Count == take ? items[^1].Sequence.ToString() : null);
     }
 
@@ -108,11 +144,32 @@ public sealed class PersistentInboxService(InboxDbContext db, ICurrentTenant cur
         return ToActivity(message);
     }
 
-    public async Task<ConversationSummary?> SetStatusAsync(Guid id, ConversationStatus status, CancellationToken cancellationToken) { await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, cancellationToken); var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null; c.Status = status; Touch(c); AddOutbox(c.TenantId, "conversation.updated", c.Id); await AuditAndSave(c.TenantId, "conversation.status.changed", c.Id, cancellationToken); return await SummaryQuery().SingleAsync(x => x.Id == id, cancellationToken); }
-    public async Task<ConversationSummary?> MarkReadAsync(Guid id, long throughSequence, CancellationToken cancellationToken) { var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null; c.LastReadSequence = Math.Max(c.LastReadSequence, throughSequence); await db.SaveChangesAsync(cancellationToken); return await SummaryQuery().SingleAsync(x => x.Id == id, cancellationToken); }
+    public async Task<ConversationSummary?> SetStatusAsync(Guid id, ConversationStatus status, CancellationToken cancellationToken)
+    {
+        await MembershipGuard.RequireRoleAsync(db, current, Domain.UserRole.Agent, cancellationToken);
+        var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null;
+        c.Status = status; Touch(c); AddOutbox(c.TenantId, "conversation.updated", c.Id);
+        await AuditAndSave(c.TenantId, "conversation.status.changed", c.Id, cancellationToken);
+        return await SummaryByIdAsync(id, cancellationToken);
+    }
+    public async Task<ConversationSummary?> MarkReadAsync(Guid id, long throughSequence, CancellationToken cancellationToken)
+    {
+        var c = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, cancellationToken); if (c is null) return null;
+        c.LastReadSequence = Math.Max(c.LastReadSequence, throughSequence);
+        await db.SaveChangesAsync(cancellationToken);
+        return await SummaryByIdAsync(id, cancellationToken);
+    }
     public async Task<bool> UpdateCustomerNotesAsync(Guid id, string? notes, CancellationToken cancellationToken) { var contact = await db.Conversations.Where(x => x.Id == id).Join(db.Contacts, x => x.ContactId, x => x.Id, (_, contact) => contact).SingleOrDefaultAsync(cancellationToken); if (contact is null) return false; contact.Notes = notes?.Trim(); await AuditAndSave(contact.TenantId, "contact.notes.updated", contact.Id, cancellationToken); return true; }
 
-    private IQueryable<ConversationSummary> SummaryQuery() => db.Conversations.Select(c => new ConversationSummary(c.Id, db.Contacts.Where(p => p.Id == c.ContactId).Select(p => p.DisplayName).First(), db.Channels.Where(ch => ch.Id == c.ChannelId).Select(ch => ch.Platform).First(), db.Messages.Where(m => m.ConversationId == c.Id).OrderByDescending(m => m.Sequence).Select(m => m.Body).FirstOrDefault() ?? "", c.Status, db.Messages.Any(m => m.ConversationId == c.Id && m.Direction == MessageDirection.Inbound && m.Sequence > c.LastReadSequence), c.UpdatedAt));
+    private async Task<ConversationSummary?> SummaryByIdAsync(Guid id, CancellationToken cancellationToken)
+    {
+        // Order/filter on the base entity before projecting (see ListAsync). Returning the summary
+        // from a projection created eagerly against the query filter is not translatable by EF Core.
+        return await db.Conversations
+            .Where(x => x.Id == id)
+            .Select(x => new ConversationSummary(x.Id, db.Contacts.Where(p => p.Id == x.ContactId).Select(p => p.DisplayName).First(), db.Channels.Where(ch => ch.Id == x.ChannelId).Select(ch => ch.Platform).First(), db.Messages.Where(m => m.ConversationId == x.Id).OrderByDescending(m => m.Sequence).Select(m => m.Body).FirstOrDefault() ?? "", x.Status, db.Messages.Any(m => m.ConversationId == x.Id && m.Direction == MessageDirection.Inbound && m.Sequence > x.LastReadSequence), x.UpdatedAt))
+            .SingleOrDefaultAsync(cancellationToken);
+    }
     private async Task<long> NextSequence(Guid conversationId, CancellationToken token) { var messageMax = await db.Messages.Where(x => x.ConversationId == conversationId).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0; var noteMax = await db.InternalNotes.Where(x => x.ConversationId == conversationId).Select(x => (long?)x.Sequence).MaxAsync(token) ?? 0; return Math.Max(messageMax, noteMax) + 1; }
     private static string RequireBody(string body) => string.IsNullOrWhiteSpace(body) ? throw new ArgumentException("Body is required.") : body.Trim();
     private static string BodyFor(OutboundMessageCommand command, bool hasAttachments)
