@@ -25,6 +25,28 @@ const roleLabel = (value: number | UserRole) => typeof value === 'number' ? ['Ow
 const eventLabels: Record<string, string> = { 'message.received': 'New customer messages', 'message.failed': 'Message delivery failures', 'channel.unhealthy': 'Channel connection issues', 'invitation.created': 'Team invitations', 'auth.login.succeeded': 'Signed in', 'auth.email.verified': 'Email verified', 'tenant.registered': 'Workspace created', 'canned-response.created': 'Saved response created' };
 const eventLabel = (kind: string) => eventLabels[kind] ?? kind.replace(/[._-]/g, ' ').replace(/^./, c => c.toUpperCase());
 
+const preferenceHelp: Record<string, string> = {
+  'message.received': 'Alert when a customer message arrives.',
+  'message.failed': 'Alert when an outbound message fails to deliver.',
+  'channel.unhealthy': 'Alert when a channel connection has issues.',
+  'invitation.created': 'Alert when a teammate is invited.',
+};
+
+function timeAgo(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (seconds < 60) return 'Just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days}d ago`;
+  return new Date(then).toLocaleDateString();
+}
+
 function useConfirmation() {
   const [confirmation, setConfirmation] = useState<{ title: string; description: string; action(): void } | null>(null);
   return { ask: (title: string, description: string, action: () => void) => setConfirmation({ title, description, action }), dialog: confirmation && <Dialog title={confirmation.title} onClose={() => setConfirmation(null)}><p>{confirmation.description}</p><div className="button-row"><button onClick={() => setConfirmation(null)}>Cancel</button><button className="danger" onClick={() => { confirmation.action(); setConfirmation(null); }}>Confirm</button></div></Dialog> };
@@ -245,13 +267,17 @@ export function NotificationsPage() {
   const read = async (id: string) => { await action.run(async () => { await admin.markNotificationRead(id); refresh(); }); };
   const readAll = async () => { await action.run(async () => { await admin.markAllNotificationsRead(); refresh(); }, 'All notifications marked as read.'); };
   const togglePref = async (kind: string, enabled: boolean) => { await action.run(async () => { await admin.setPreference(kind, enabled); await queryClient.invalidateQueries({ queryKey: ['notification-preferences'] }); }, 'Notification preference updated.'); };
-  return <WorkspacePage title="Notifications">
-    <label><input type="checkbox" checked={unreadOnly} onChange={(event) => setUnreadOnly(event.target.checked)} /> Unread only</label>
-    <button disabled={action.pending || !list.data?.some(item => !item.isRead)} onClick={readAll}>Mark all read</button>{action.feedback}
-    <LoadState query={list}>{list.data && (list.data.length === 0 ? <div className="empty-state"><h2>You're all caught up</h2><p>No notifications.</p></div> : <ul className="local-list">{list.data.map((item) => <li key={item.id}><span><strong>{eventLabel(item.type)}</strong><br />{item.text}<br /><small>{new Date(item.createdAt).toLocaleString()}</small></span>{!item.isRead && <button disabled={action.pending} onClick={() => read(item.id)}>Mark read</button>}</li>)}</ul>)}</LoadState>
+  const hasUnread = list.data?.some((item) => !item.isRead) ?? false;
+  return <WorkspacePage title="Notifications" actions={<button className="primary" disabled={action.pending || !hasUnread} onClick={readAll}>{action.pending ? 'Working…' : 'Mark all read'}</button>}>
+    <div className="segmented" role="group" aria-label="Notification filter">
+      <button aria-pressed={!unreadOnly} className={!unreadOnly ? 'active' : ''} onClick={() => setUnreadOnly(false)}>All</button>
+      <button aria-pressed={unreadOnly} className={unreadOnly ? 'active' : ''} onClick={() => setUnreadOnly(true)}>Unread</button>
+    </div>
+    {action.feedback}
+    <LoadState query={list}>{list.data && (list.data.length === 0 ? <div className="empty-state"><h2>{unreadOnly ? 'No unread notifications' : "You're all caught up"}</h2><p>{unreadOnly ? 'Everything here has been read.' : 'No notifications.'}</p></div> : <ul className="local-list notification-list">{list.data.map((item) => <li key={item.id} className={item.isRead ? '' : 'is-unread'}><span className="notification-dot" aria-hidden="true" /><span><strong>{eventLabel(item.type)}</strong><br />{item.text}<br /><small>{timeAgo(item.createdAt)}</small></span>{!item.isRead && <button disabled={action.pending} onClick={() => read(item.id)}>Mark read</button>}</li>)}</ul>)}</LoadState>
     <section><h2>Preferences</h2><LoadState query={prefs}>{prefs.data && <ul className="local-list">{['message.received', 'message.failed', 'channel.unhealthy', 'invitation.created'].map((kind) => {
       const current = prefs.data.find((pref) => pref.kind === kind);
-      return <li key={kind}><span>{eventLabel(kind)}</span><button disabled={action.pending} aria-label={`${current?.enabled === false ? 'Enable' : 'Disable'} ${eventLabel(kind)}`} onClick={() => togglePref(kind, !(current?.enabled ?? true))}>{current?.enabled === false ? 'Enable' : 'Disable'}</button></li>;
+      return <li key={kind}><span>{eventLabel(kind)}<br /><small>{preferenceHelp[kind]}</small></span><button disabled={action.pending} aria-label={`${current?.enabled === false ? 'Enable' : 'Disable'} ${eventLabel(kind)}`} onClick={() => togglePref(kind, !(current?.enabled ?? true))}>{current?.enabled === false ? 'Enable' : 'Disable'}</button></li>;
     })}</ul>}</LoadState></section>
   </WorkspacePage>;
 }

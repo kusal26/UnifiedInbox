@@ -129,8 +129,15 @@ td small { display:inline-block; margin-top:4px; }
 .inbox-list h1 { font-size:21px; margin-bottom:0; }
 .inbox-search { margin:20px 0 12px; }
 .inbox-filters,.composer-modes,.composer-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-.inbox-filters button,.composer-modes button { font-size:12px; min-height:34px; padding:7px 10px; }
-.inbox-filters .active,.composer-modes .active { color:#1949a4; background:var(--accent-soft); border-color:#a8bde8; }
+.inbox-filters button,.composer-modes button,.segmented button { font-size:12px; min-height:34px; padding:7px 10px; }
+.inbox-filters .active,.composer-modes .active,.segmented .active { color:#1949a4; background:var(--accent-soft); border-color:#a8bde8; }
+.segmented { display:inline-flex; gap:6px; flex-wrap:wrap; align-items:center; margin:18px 0 4px; }
+.notification-list > li { gap:12px; }
+.notification-list > li > span:nth-child(2) { flex:1; min-width:0; }
+.notification-list > li.is-unread { background:var(--accent-soft); box-shadow:inset 3px 0 var(--accent); }
+.notification-dot { width:8px; height:8px; border-radius:50%; background:transparent; flex-shrink:0; margin-top:7px; }
+li.is-unread > .notification-dot { background:var(--accent); }
+.notification-list small { display:inline-block; margin-top:4px; }
 .conversation-list { margin:18px -16px 0; overflow-y:auto; min-height:0; }
 .conversation-row { width:100%; display:grid; grid-template-columns:36px minmax(0,1fr) 8px; gap:10px; align-items:center; padding:18px 16px; border:0; border-top:1px solid var(--line); border-radius:0; text-align:left; background:transparent; }
 .conversation-row.selected { background:var(--accent-soft); box-shadow:inset 3px 0 var(--accent); }
