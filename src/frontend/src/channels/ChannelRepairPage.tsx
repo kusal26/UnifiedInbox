@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { canAdmin, useClients, useMe } from '../api/hooks';
+import { WorkspacePage } from '../workspace/WorkspacePages';
 import { EmbeddedSignupButton } from './EmbeddedSignupButton';
 
 export function ChannelRepairPage() {
@@ -45,24 +46,22 @@ export function ChannelRepairPage() {
     }
   };
 
-  if (!canAdmin(user)) return <section className="workspace-page"><h1>Channels</h1><p role="alert">You need an administrator role to repair a channel.</p></section>;
+  if (!canAdmin(user)) return <WorkspacePage title="Repair channel access"><p role="alert">You need an administrator role to repair a channel.</p></WorkspacePage>;
 
-  return <section className="workspace-page">
-    <p className="eyebrow">Workspace</p>
-    <h1>Repair channel access</h1>
+  return <WorkspacePage title="Repair channel access">
     {channels.isPending && <p role="status">Loading…</p>}
     {channel
       ? <div className="workspace-card">
           <h2>{channel.displayName || channel.platform}</h2>
           {!attempt
-            ? <form onSubmit={(event) => { event.preventDefault(); void start(); }}>
+            ? <form className="form-stack" onSubmit={(event) => { event.preventDefault(); void start(); }}>
                 <p>Reconnect this WhatsApp number through Meta Embedded Signup. The previous access was revoked or rejected by the provider.</p>
-                <button type="submit" disabled={pending}>{pending ? 'Starting…' : 'Start repair'}</button>
+                <div className="button-row"><button type="submit" disabled={pending}>{pending ? 'Starting…' : 'Start repair'}</button></div>
               </form>
             : <EmbeddedSignupButton attempt={attempt} onSession={(session) => void finish(session)} onError={setError} />}
           {result && <p role="status">{result}</p>}
           {error && <p role="alert">{error}</p>}
         </div>
       : !channels.isPending && <p role="alert">The channel could not be found.</p>}
-  </section>;
+  </WorkspacePage>;
 }
