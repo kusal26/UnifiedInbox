@@ -1,9 +1,12 @@
 import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { request } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { canAdmin, isOwner, useClients, useMe } from '../api/hooks';
 import type { UserRole } from '../api/auth';
+import type { ConnectionAttempt } from '../api/admin';
+import { EmbeddedSignupButton } from '../channels/EmbeddedSignupButton';
 
 type Channel = { id: string; displayName: string; platform: string; status: string; isHealthy: boolean; isEnabled: boolean; lastWebhookAt?: string | null };
 type Member = { id: string; displayName: string; email: string; role: number | UserRole; isActive: boolean };
@@ -35,25 +38,33 @@ export function ChannelsPage() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ['channels'], queryFn: () => admin.channels() });
   const [displayName, setDisplayName] = useState('');
-  const [wizard, setWizard] = useState<{ attemptId: string; state: string; expiresAt: string } | null>(null);
-  const [complete, setComplete] = useState({ code: '', phoneNumberId: '', businessId: '' });
+  const [wizard, setWizard] = useState<ConnectionAttempt | null>(null);
   const [result, setResult] = useState('');
+  const [error, setError] = useState('');
   const [testingId, setTestingId] = useState<string | null>(null);
 
   const begin = async (event: FormEvent) => {
     event.preventDefault();
     setResult('');
-    setWizard(await admin.beginConnect(displayName.trim()));
+    setError('');
+    try {
+      setWizard(await admin.beginConnect(displayName.trim()));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The connection attempt could not be started.');
+    }
   };
-  const finish = async (event: FormEvent) => {
-    event.preventDefault();
+  const finish = async (session: { code: string; phoneNumberId: string; businessId: string }) => {
     if (!wizard) return;
-    setResult('');
-    const channel = await admin.completeConnect({ state: wizard.state, code: complete.code.trim(), phoneNumberId: complete.phoneNumberId.trim(), businessId: complete.businessId.trim(), displayName: displayName.trim() || 'WhatsApp' });
-    setWizard(null);
-    setComplete({ code: '', phoneNumberId: '', businessId: '' });
-    setResult(`Connected ${channel.displayName || channel.externalAccountId}.`);
-    await queryClient.invalidateQueries({ queryKey: ['channels'] });
+    setError('');
+    try {
+      const channel = await admin.completeConnect({ state: wizard.state, nonce: wizard.nonce, code: session.code, phoneNumberId: session.phoneNumberId, businessId: session.businessId, displayName: displayName.trim() || 'WhatsApp' });
+      setWizard(null);
+      setResult(`Connected ${channel.displayName || channel.externalAccountId}.`);
+      await queryClient.invalidateQueries({ queryKey: ['channels'] });
+    } catch (err) {
+      setWizard(null);
+      setError(err instanceof Error ? err.message : 'The connection could not be completed. Try again.');
+    }
   };
   const test = async (id: string) => {
     setTestingId(id);
@@ -67,28 +78,25 @@ export function ChannelsPage() {
     await admin.disconnectChannel(id);
     await queryClient.invalidateQueries({ queryKey: ['channels'] });
   };
-  const reauthorize = async (id: string, name: string) => {
-    setDisplayName(name);
-    setResult('');
-    setWizard(await admin.beginReauthorize(id));
-  };
 
   return <WorkspacePage title="Channels">
-    <LoadState query={query}>{query.data && <div className="channel-grid">{query.data.map((channel) => <ChannelCard key={channel.id} channel={channel} testing={testingId === channel.id} onTest={() => test(channel.id)} onToggle={(enabled) => toggle(channel.id, enabled)} onDisconnect={() => disconnect(channel.id)} onReauthorize={() => reauthorize(channel.id, channel.displayName)} />)}</div>}</LoadState>
+    <LoadState query={query}>{query.data && <div className="channel-grid">{query.data.map((channel) => <ChannelCard key={channel.id} channel={channel} testing={testingId === channel.id} onTest={() => test(channel.id)} onToggle={(enabled) => toggle(channel.id, enabled)} onDisconnect={() => disconnect(channel.id)} />)}</div>}</LoadState>
     {canAdmin(user) && <section className="workspace-card"><h2>Connect a WhatsApp number</h2>
-      {!wizard ? <form onSubmit={begin}><label>Display name<input aria-label="Channel display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label><button>Start Embedded Signup</button></form>
-        : <form onSubmit={finish}><p role="status">Complete Meta Embedded Signup in a popup, then paste the authorization code, phone number ID, and business ID here. This attempt expires at {new Date(wizard.expiresAt).toLocaleTimeString()}.</p>
-          <label>Authorization code<input aria-label="Authorization code" value={complete.code} onChange={(event) => setComplete({ ...complete, code: event.target.value })} required /></label>
-          <label>Phone number ID<input aria-label="Phone number ID" value={complete.phoneNumberId} onChange={(event) => setComplete({ ...complete, phoneNumberId: event.target.value })} required /></label>
-          <label>Business ID<input aria-label="Business ID" value={complete.businessId} onChange={(event) => setComplete({ ...complete, businessId: event.target.value })} required /></label>
-          <button>Complete connection</button></form>}
+      {!wizard
+        ? <form onSubmit={begin}><label>Display name<input aria-label="Channel display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label><button>Start Embedded Signup</button></form>
+        : <div>
+            <p role="status">Complete Meta Embedded Signup in the popup. This attempt expires at {new Date(wizard.expiresAt).toLocaleTimeString()}.</p>
+            <EmbeddedSignupButton attempt={wizard} onSession={(session) => void finish(session)} onError={setError} />
+          </div>}
     </section>}
     {result && <p role="status">{result}</p>}
+    {error && <p role="alert">{error}</p>}
   </WorkspacePage>;
 }
 
-function ChannelCard({ channel, testing, onTest, onToggle, onDisconnect, onReauthorize }: { channel: Channel; testing: boolean; onTest(): void; onToggle(enabled: boolean): void; onDisconnect(): void; onReauthorize(): void }) {
+function ChannelCard({ channel, testing, onTest, onToggle, onDisconnect }: { channel: Channel; testing: boolean; onTest(): void; onToggle(enabled: boolean): void; onDisconnect(): void }) {
   const { admin } = useClients();
+  const navigate = useNavigate();
   const [healthOpen, setHealthOpen] = useState(false);
   const health = useQuery({ queryKey: ['channel-health', channel.id], queryFn: () => admin.channelHealth(channel.id), enabled: healthOpen });
   return <article className="workspace-card">
@@ -98,7 +106,7 @@ function ChannelCard({ channel, testing, onTest, onToggle, onDisconnect, onReaut
     <div>
       <button onClick={onTest} disabled={testing}>{testing ? 'Testing…' : 'Test connection'}</button>
       <button onClick={() => onToggle(!channel.isEnabled)}>{channel.isEnabled ? 'Disable' : 'Enable'}</button>
-      <button onClick={onReauthorize}>Repair access</button>
+      <button onClick={() => navigate(`/channels/${channel.id}/repair`)}>Repair access</button>
       <button onClick={() => setHealthOpen((open) => !open)}>{healthOpen ? 'Hide health' : 'Health history'}</button>
       <button onClick={onDisconnect}>Disconnect</button>
     </div>

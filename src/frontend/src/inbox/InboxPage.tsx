@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
-import type { ActivityItem, ActivityPage, Conversation, ConversationPage, ConversationStatus, InboxApi } from '../api/inbox';
-import type { AdminApi, CannedResponse } from '../api/admin';
+import type { ActivityItem, ActivityPage, Conversation, ConversationPage, ConversationStatus, InboxApi, OutboundTemplateSelection } from '../api/inbox';
+import type { AdminApi, CannedResponse, WhatsAppTemplateInfo } from '../api/admin';
 import type { AttachmentsApi } from '../api/attachments';
+import { ApiError } from '../api/client';
 import { useClients } from '../api/hooks';
 import { ConversationTimeline } from './ConversationTimeline';
+import { AttachmentComposer } from './AttachmentComposer';
+import { TemplatePicker } from './TemplatePicker';
+import type { Fetcher } from '../api/client';
 
 const statuses: Array<ConversationStatus | 'All'> = ['All', 'Open', 'Pending', 'Closed'];
 
@@ -12,7 +16,7 @@ function createIdempotencyKey() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
-interface InboxPageProps { api?: InboxApi; admin?: AdminApi; attachments?: AttachmentsApi }
+interface InboxPageProps { api?: InboxApi; admin?: AdminApi; attachments?: AttachmentsApi; attachmentPut?: Fetcher }
 
 export function InboxPage(props: InboxPageProps) {
   const clients = useClients();
@@ -96,8 +100,8 @@ export function InboxPage(props: InboxPageProps) {
   });
 
   const sendMutation = useMutation({
-    mutationFn: (input: { id: string; body: string; key: string; templateName?: string; attachmentIds?: string[] }) =>
-      api.sendMessage(input.id, input.body, input.key, { templateName: input.templateName, attachmentIds: input.attachmentIds }),
+    mutationFn: (input: { id: string; body: string; key: string; template?: OutboundTemplateSelection; attachmentIds?: string[] }) =>
+      api.sendMessage(input.id, input.body, input.key, { template: input.template, attachmentIds: input.attachmentIds }),
     onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: ['activity', input.id] });
       const optimistic: ActivityItem = {
@@ -168,13 +172,15 @@ export function InboxPage(props: InboxPageProps) {
         />
         {activityQuery.hasNextPage && <button onClick={() => activityQuery.fetchNextPage()} disabled={activityQuery.isFetchingNextPage}>{activityQuery.isFetchingNextPage ? 'Loading…' : 'Load older messages'}</button>}
         <Composer
+          key={selected.id}
           conversationId={selected.id}
+          api={api}
           admin={admin}
           attachments={attachments}
+          attachmentPut={props.attachmentPut}
           sending={sendMutation.isPending || noteMutation.isPending}
-          sendError={(sendMutation.isError || noteMutation.isError) ? 'The message could not be sent. Try again.' : null}
-          onSend={(body, extra) => sendMutation.mutate({ id: selected.id, body, key: createIdempotencyKey(), ...extra })}
-          onNote={(body) => noteMutation.mutate({ id: selected.id, body })}
+          onSend={(body, extra) => sendMutation.mutateAsync({ id: selected.id, body, key: createIdempotencyKey(), ...extra })}
+          onNote={(body) => noteMutation.mutateAsync({ id: selected.id, body })}
         />
       </>}
     </main>
@@ -194,24 +200,30 @@ function ThreadHeader({ conversation, onStatus, statusError }: { conversation: C
   </header>;
 }
 
-function Composer(props: {
+interface ComposerProps {
   conversationId: string;
+  api: InboxApi;
   admin: AdminApi;
   attachments: AttachmentsApi;
+  attachmentPut?: Fetcher;
   sending: boolean;
-  sendError: string | null;
-  onSend(body: string, extra?: { templateName?: string; attachmentIds?: string[] }): void;
-  onNote(body: string): void;
-}) {
+  onSend(body: string, extra?: { template?: OutboundTemplateSelection; attachmentIds?: string[] }): Promise<unknown>;
+  onNote(body: string): Promise<unknown>;
+}
+
+function Composer(props: ComposerProps) {
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [message, setMessage] = useState('');
-  const [templateName, setTemplateName] = useState('');
   const [cannedOpen, setCannedOpen] = useState(false);
   const [cannedSearch, setCannedSearch] = useState('');
-  const [attachedIds, setAttachedIds] = useState<string[]>([]);
-  const [attachedNames, setAttachedNames] = useState<string[]>([]);
-  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'error'>('idle');
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [readyIds, setReadyIds] = useState<string[]>([]);
+  const [attachmentsReady, setAttachmentsReady] = useState(true);
+  const [attachmentClaim, setAttachmentClaim] = useState(0);
+  const [attachmentReset, setAttachmentReset] = useState(0);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateRequired, setTemplateRequired] = useState(false);
+  const [template, setTemplate] = useState<OutboundTemplateSelection | null>(null);
+  const [error, setError] = useState('');
 
   const cannedQuery = useQuery({
     queryKey: ['canned', cannedSearch],
@@ -220,54 +232,102 @@ function Composer(props: {
   });
   const responses: CannedResponse[] = cannedQuery.data ?? [];
 
-  const send = () => {
-    const body = message.trim();
-    if (!body || props.sending || uploadState === 'uploading') return;
-    if (mode === 'note') props.onNote(body);
-    else props.onSend(body, { templateName: templateName.trim() || undefined, attachmentIds: attachedIds.length ? attachedIds : undefined });
-    setMessage('');
-    setAttachedIds([]);
-    setAttachedNames([]);
+  const detailsQuery = useQuery({ queryKey: ['conversation', props.conversationId], queryFn: () => props.api.getConversation(props.conversationId) });
+  const details = detailsQuery.data;
+
+  const templatesQuery = useQuery({
+    queryKey: ['channel-templates', details?.channelId],
+    queryFn: () => props.admin.channelTemplates(details!.channelId),
+    enabled: templateOpen && Boolean(details?.channelId),
+  });
+  const templates: WhatsAppTemplateInfo[] | null = templatesQuery.data ?? null;
+
+  const dropAttachments = () => {
+    setReadyIds([]);
+    setAttachmentReset((value) => value + 1);
   };
 
-  const attach = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setUploadState('uploading');
+  const send = async () => {
+    const body = message.trim();
+    if (props.sending) return;
+    if (mode === 'note') {
+      if (!body) return;
+      try { await props.onNote(body); setMessage(''); setError(''); } catch (err) { setError(errorMessage(err)); }
+      return;
+    }
+    if (templateRequired && !template) {
+      setTemplateOpen(true);
+      setError('The 24-hour customer service window is closed. Choose an approved template to send.');
+      return;
+    }
+    if (!body && !template && readyIds.length === 0) return;
     try {
-      const ids: string[] = [];
-      const names: string[] = [];
-      for (const file of Array.from(files)) {
-        ids.push(await props.attachments.upload(file));
-        names.push(file.name);
+      // Outside the window a template is the deliverable; WhatsApp content comes from the approved
+      // template snapshot. Record which template was used so the timeline row and conversation
+      // preview stay meaningful, and never combine a template with staged attachments.
+      const outboundBody = template ? `${template.name} (${template.language})` : body;
+      await props.onSend(outboundBody, { template: template ?? undefined, attachmentIds: readyIds.length ? readyIds : undefined });
+      if (readyIds.length > 0) setAttachmentClaim((value) => value + 1);
+      setMessage('');
+      setTemplate(null);
+      setTemplateOpen(false);
+      setTemplateRequired(false);
+      setError('');
+    } catch (err) {
+      const code = errorCode(err);
+      if (code === 'messaging_window_closed') {
+        dropAttachments();
+        setTemplateRequired(true);
+        setTemplateOpen(true);
+        setError('The 24-hour customer service window is closed. Choose an approved template to send.');
+      } else {
+        setError(errorMessage(err));
       }
-      setAttachedIds((current) => [...current, ...ids]);
-      setAttachedNames((current) => [...current, ...names]);
-      setUploadState('idle');
-    } catch {
-      setUploadState('error');
     }
   };
+
+  const openPicker = () => { setTemplateOpen(true); setError(''); };
 
   return <section className={`composer ${mode === 'note' ? 'is-note' : ''}`} aria-label="Message composer">
     <div className="composer-modes"><button className={mode === 'reply' ? 'active' : ''} onClick={() => setMode('reply')}>Reply</button><button className={mode === 'note' ? 'active' : ''} onClick={() => setMode('note')}>Internal note</button></div>
     <textarea aria-label="Message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder={mode === 'note' ? 'Write a private note' : 'Write a reply'} />
-    {mode === 'reply' && <label>Template (for closed 24h windows)<input aria-label="Template name" value={templateName} onChange={(event) => setTemplateName(event.target.value)} placeholder="hello_world" /></label>}
+    {mode === 'reply' && !templateOpen && <button type="button" aria-label="Use an approved template" onClick={openPicker}>{template ? 'Change template' : 'Use a template'}</button>}
+    {mode === 'reply' && templateOpen && <TemplatePicker
+      templates={templates}
+      loading={templatesQuery.isPending}
+      error={templatesQuery.isError ? 'Approved templates could not be loaded.' : ''}
+      onCancel={() => { setTemplateOpen(false); setError(''); }}
+      onConfirm={(selection) => { if (selection) dropAttachments(); setTemplate(selection); setTemplateOpen(false); setError(''); }}
+    />}
     <div className="composer-actions">
       <button aria-label="Canned responses" onClick={() => setCannedOpen((open) => !open)}>Canned responses</button>
       <button aria-label="Add emoji" onClick={() => setMessage((current) => `${current}${current ? ' ' : ''}🙂`)}>🙂</button>
-      <button aria-label="Add attachment" onClick={() => fileInput.current?.click()}>Attach</button>
-      <input ref={fileInput} type="file" hidden multiple aria-label="Attach files" onChange={(event) => { void attach(event.target.files); event.target.value = ''; }} />
-      <button className="send-button" onClick={send} disabled={props.sending || uploadState === 'uploading'}>{mode === 'note' ? 'Add note' : 'Send reply'}</button>
+      {mode === 'reply' && <AttachmentComposer
+        attachments={props.attachments}
+        put={props.attachmentPut}
+        disabled={Boolean(template) || templateRequired}
+        resetKey={`${props.conversationId}:${attachmentReset}`}
+        claimSignal={attachmentClaim}
+        onSelectionChange={(ids, ready) => { setReadyIds(ids); setAttachmentsReady(ready); }}
+      />}
+      <button className="send-button" onClick={() => void send()} disabled={props.sending || !attachmentsReady || (mode === 'reply' && templateRequired && !template)}>{mode === 'note' ? 'Add note' : 'Send reply'}</button>
     </div>
-    {attachedNames.length > 0 && <p>Attached: {attachedNames.join(', ')}</p>}
-    {uploadState === 'uploading' && <p role="status">Uploading attachments…</p>}
-    {uploadState === 'error' && <p role="alert">An attachment upload failed. Try again.</p>}
-    {props.sendError && <p role="alert">{props.sendError}</p>}
+    {template && <p role="status">Sending as approved template {template.name} ({template.language}).</p>}
+    {error && <p role="alert">{error}</p>}
     {cannedOpen && <div className="canned-menu">
       <input aria-label="Search canned responses" value={cannedSearch} onChange={(event) => setCannedSearch(event.target.value)} autoFocus />
       {responses.map((response) => <button key={response.id} onClick={() => { setMessage((current) => current ? `${current} ${response.content}` : response.content); setCannedOpen(false); }}>{response.title}</button>)}
     </div>}
   </section>;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message || 'The message could not be sent. Try again.';
+  return 'The message could not be sent. Try again.';
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof ApiError ? error.code : undefined;
 }
 
 function CustomerPanel({ conversationId, api }: { conversationId: string; api: InboxApi }) {

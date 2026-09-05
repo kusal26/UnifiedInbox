@@ -118,3 +118,15 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
   .metric-grid, .channel-grid { grid-template-columns: 1fr; }
   .inbox-page { min-height: calc(100vh - 136px); display: block; border-radius: 10px; }.inbox-list { min-height: calc(100vh - 136px); border-right: 0; }.inbox-thread { display: none; min-height: calc(100vh - 136px); }.has-selection .inbox-list { display: none; }.has-selection .inbox-thread { display: flex; }.customer-panel { display: none; }.mobile-back { display: inline-block; margin: 0 0 8px; border: 0; color: var(--accent); background: transparent; }.conversation-timeline { min-height: 260px; }.composer-actions { gap: 5px; }.composer .send-button { margin-left: 0; }
 }
+
+.composer .composer-modes button, .composer .composer-actions button { border: 1px solid #c9d1ff; border-radius: 7px; padding: 7px 10px; color: #3f54bc; background: #edf0ff; font-weight: 700; }
+.composer textarea { width: 100%; }
+.template-sheet { display: grid; gap: 8px; margin: 10px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbff; }
+.template-sheet label, .template-sheet fieldset { display: grid; gap: 4px; margin: 0; color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.template-sheet select, .template-sheet input { padding: 7px; border: 1px solid var(--line); border-radius: 7px; background: white; }
+.attachment-composer { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.attachment-item { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 7px; padding: 4px 7px; background: #f8faff; font-size: 12px; }
+.attachment-item.is-rejected { border-color: #e6b3b1; background: #fff3f2; }
+.attachment-item [role="alert"] { margin: 0; }
+.embedded-signup { display: grid; gap: 6px; justify-items: start; margin: 12px 0; }
+.embedded-signup [role="status"], .embedded-signup p { margin: 0; font-size: 13px; }

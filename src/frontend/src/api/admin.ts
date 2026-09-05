@@ -8,6 +8,20 @@ export interface ManagedChannel {
   isHealthy: boolean; isEnabled: boolean; status: string;
   lastWebhookAt?: string | null; lastOutboundAt?: string | null;
 }
+export interface ConnectionAttempt {
+  attemptId: string; state: string; nonce: string;
+  metaAppId: string; configurationId: string; graphVersion: string;
+  embeddedSignupVersion: string; expiresAt: string;
+}
+export interface CompleteConnectInput {
+  state: string; nonce: string; code: string;
+  phoneNumberId: string; businessId: string; displayName: string;
+}
+export interface WhatsAppTemplateComponent { type: string; parameterCount: number }
+export interface WhatsAppTemplateInfo {
+  name: string; language: string; category: string; status: string;
+  components: WhatsAppTemplateComponent[];
+}
 export interface CannedResponse { id: string; title: string; shortcut: string; content: string }
 export interface NotificationItem { id: string; type: string; text: string; isRead: boolean; createdAt: string }
 export interface NotificationPreference { id: string; userId: string; kind: string; enabled: boolean }
@@ -37,9 +51,10 @@ export function createAdminApi(getToken: () => string | null, fetcher: Fetcher =
     acceptInvitation: (token: string, displayName: string, password: string) => request<{ accepted: boolean }>(fetcher, endpoint('/invitations/accept'), { method: 'POST', body: { token, displayName, password } }),
     revokeInvitation: (id: string) => request<void>(fetcher, endpoint(`/invitations/${id}`), { method: 'DELETE', headers: headers() }),
     channels: () => request<ManagedChannel[]>(fetcher, endpoint('/channels'), { headers: headers() }),
-    beginConnect: (displayName: string) => request<{ attemptId: string; state: string; expiresAt: string }>(fetcher, endpoint('/channels/connect/attempt'), { method: 'POST', headers: headers(), body: { displayName } }),
-    completeConnect: (data: { state: string; code: string; phoneNumberId: string; businessId: string; displayName: string }) => request<ManagedChannel>(fetcher, endpoint('/channels/connect/complete'), { method: 'POST', headers: headers(), body: data }),
-    beginReauthorize: (id: string) => request<{ attemptId: string; state: string; expiresAt: string }>(fetcher, endpoint(`/channels/${id}/reauthorize`), { method: 'POST', headers: headers() }),
+    channelTemplates: (id: string) => request<WhatsAppTemplateInfo[]>(fetcher, endpoint(`/channels/${id}/templates`), { headers: headers() }),
+    beginConnect: (displayName: string) => request<ConnectionAttempt>(fetcher, endpoint('/channels/connect/attempt'), { method: 'POST', headers: headers(), body: { displayName } }),
+    completeConnect: (data: CompleteConnectInput) => request<ManagedChannel>(fetcher, endpoint('/channels/connect/complete'), { method: 'POST', headers: headers(), body: data }),
+    beginReauthorize: (id: string) => request<ConnectionAttempt>(fetcher, endpoint(`/channels/${id}/reauthorize`), { method: 'POST', headers: headers() }),
     testChannel: (id: string) => request<{ healthy: boolean; detail: string }>(fetcher, endpoint(`/channels/${id}/test`), { method: 'POST', headers: headers() }),
     channelHealth: (id: string) => request<ChannelHealthEntry[]>(fetcher, endpoint(`/channels/${id}/health`), { headers: headers() }),
     setChannelEnabled: (id: string, enabled: boolean) => request<ManagedChannel>(fetcher, endpoint(`/channels/${id}/enabled`), { method: 'PUT', headers: headers(), body: { enabled } }),

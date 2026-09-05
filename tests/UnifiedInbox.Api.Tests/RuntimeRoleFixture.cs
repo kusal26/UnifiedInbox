@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -51,12 +52,19 @@ public sealed class RuntimeRoleFixture : IAsyncLifetime
             builder.UseSetting("WhatsApp:AppSecret", AppSecret);
             builder.UseSetting("WhatsApp:VerifyToken", "unit-test-verify-token");
             builder.UseSetting("WhatsApp:UseFake", "true");
+            // Channel credentials are sealed with AES-GCM under this key. A fixed 32-byte key lets
+            // the real API host protect/unprotect envelopes that tests seed through the owner role.
+            builder.UseSetting("Credentials:MasterKey", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
             builder.UseSetting("Redis:Connection", "");
             builder.UseSetting("RabbitMq:Connection", "");
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IMailSender>();
                 services.AddSingleton<IMailSender>(Mail);
+                // The API hard-codes a 120 requests/minute global rate limit partitioned by remote IP,
+                // and every request from the test host shares 127.0.0.1. Gate the request rate before
+                // the limiter so a full authorization-matrix run never trips 429s.
+                services.AddSingleton<IStartupFilter, RequestThrottleStartupFilter>();
             });
         });
     }
@@ -75,6 +83,33 @@ public sealed class RuntimeRoleFixture : IAsyncLifetime
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "UnifiedInbox.slnx"))) directory = directory.Parent;
         if (directory is null) throw new InvalidOperationException("Repository root was not found.");
         return Path.Combine(directory.FullName, relative);
+    }
+
+    private const int RequestGapMs = 600;
+    private static readonly object RateGateLock = new();
+    private static long nextAllowedTick = Environment.TickCount64;
+
+    /// <summary>First-in-pipeline middleware that spaces requests so the API's hard-coded
+    /// 120 req/min per-IP rate limiter is never exceeded by the whole runtime-role collection.</summary>
+    private sealed class RequestThrottleStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, nextMiddleware) =>
+            {
+                long scheduled;
+                lock (RateGateLock)
+                {
+                    var now = Environment.TickCount64;
+                    scheduled = Math.Max(now, nextAllowedTick);
+                    nextAllowedTick = scheduled + RequestGapMs;
+                }
+                var wait = scheduled - Environment.TickCount64;
+                if (wait > 0) await Task.Delay((int)wait, context.RequestAborted);
+                await nextMiddleware(context);
+            });
+            next(app);
+        };
     }
 }
 

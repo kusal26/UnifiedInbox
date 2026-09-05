@@ -55,6 +55,14 @@ export interface ConversationDetails {
   updatedAt: string;
 }
 
+export interface OutboundTemplateParameter { type: string; text?: string }
+export interface OutboundTemplateComponent { type: string; parameters?: OutboundTemplateParameter[] }
+export interface OutboundTemplateSelection {
+  name: string;
+  language: string;
+  components: OutboundTemplateComponent[];
+}
+
 export interface InboxApi {
   login(credentials: LoginCredentials): Promise<LoginResponse>;
   listConversations(filters?: { search?: string; status?: ConversationStatus; unreadOnly?: boolean; cursor?: string; pageSize?: number }): Promise<ConversationPage>;
@@ -64,7 +72,7 @@ export interface InboxApi {
   setStatus(conversationId: string, status: ConversationStatus): Promise<Conversation>;
   markRead(conversationId: string, throughSequence: number): Promise<Conversation>;
   updateCustomerNotes(conversationId: string, notes: string | null): Promise<void>;
-  sendMessage(conversationId: string, body: string, idempotencyKey: string, options?: { templateName?: string; attachmentIds?: string[] }): Promise<ActivityItem>;
+  sendMessage(conversationId: string, body: string, idempotencyKey: string, options?: { template?: OutboundTemplateSelection; attachmentIds?: string[] }): Promise<ActivityItem>;
 }
 
 type ApiConversation = Omit<Conversation, 'status'> & { status: number | ConversationStatus };
@@ -134,6 +142,13 @@ export function createInboxApi(getToken: () => string | null, fetcher: Fetcher =
     setStatus: (conversationId, status) => request<ApiConversation>(fetcher, endpoint(`/conversations/${conversationId}/status`), { method: 'PATCH', headers: authorized(), body: { status: toConversationStatus(status) } }).then(normalizeConversation),
     markRead: (conversationId, throughSequence) => request<ApiConversation>(fetcher, endpoint(`/conversations/${conversationId}/read`), { method: 'PUT', headers: authorized(), body: { throughSequence } }).then(normalizeConversation),
     updateCustomerNotes: (conversationId, notes) => request<void>(fetcher, endpoint(`/conversations/${conversationId}/customer-notes`), { method: 'PUT', headers: authorized(), body: { notes } }),
-    sendMessage: (conversationId, body, idempotencyKey, options = {}) => request<ApiActivityItem>(fetcher, endpoint(`/conversations/${conversationId}/messages`), { method: 'POST', headers: authorized({ 'Idempotency-Key': idempotencyKey }), body: { body, templateName: options.templateName, attachmentIds: options.attachmentIds } }).then(normalizeActivityItem),
+    sendMessage: (conversationId, body, idempotencyKey, options = {}) => {
+      const payload: Record<string, unknown> = { body };
+      if (options.template) {
+        payload.template = { name: options.template.name, language: options.template.language, components: options.template.components };
+      }
+      if (options.attachmentIds?.length) payload.attachmentIds = options.attachmentIds;
+      return request<ApiActivityItem>(fetcher, endpoint(`/conversations/${conversationId}/messages`), { method: 'POST', headers: authorized({ 'Idempotency-Key': idempotencyKey }), body: payload }).then(normalizeActivityItem);
+    },
   };
 }

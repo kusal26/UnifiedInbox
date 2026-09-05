@@ -52,14 +52,17 @@ describe('TeamPage', () => {
 });
 
 describe('ChannelsPage', () => {
-  it('starts an Embedded Signup attempt and completes the connection', async () => {
+  it('starts an Embedded Signup attempt and completes the connection from the Meta postMessage', async () => {
     let calls = 0;
     globalThis.fetch = vi.fn(async (url: unknown) => {
       calls += 1;
       const key = String(url);
       if (key === '/api/v1/auth/me') return new Response(JSON.stringify(me));
       if (key === '/api/v1/channels') return new Response(JSON.stringify([]));
-      if (key === '/api/v1/channels/connect/attempt') return new Response(JSON.stringify({ attemptId: 'a1', state: 'state-1', expiresAt: '2026-01-01T00:10:00Z' }));
+      if (key === '/api/v1/channels/connect/attempt') return new Response(JSON.stringify({
+        attemptId: 'a1', state: 'state-1', nonce: 'nonce-1', metaAppId: 'app-1', configurationId: 'config-1',
+        graphVersion: 'v23.0', embeddedSignupVersion: 'v4', expiresAt: '2026-01-01T00:10:00Z',
+      }));
       if (key === '/api/v1/channels/connect/complete') return new Response(JSON.stringify({ id: 'ch-1', displayName: 'Sales', platform: 'whatsapp', externalAccountId: 'phone-1', isHealthy: true, isEnabled: true, status: 'connected' }));
       throw new Error(`unexpected ${key}`);
     }) as typeof fetch;
@@ -67,15 +70,45 @@ describe('ChannelsPage', () => {
 
     await userEvent.type(await screen.findByLabelText('Channel display name'), 'Sales');
     await userEvent.click(screen.getByRole('button', { name: 'Start Embedded Signup' }));
-    expect(await screen.findByLabelText('Authorization code')).toBeVisible();
 
-    await userEvent.type(screen.getByLabelText('Authorization code'), 'code-1');
-    await userEvent.type(screen.getByLabelText('Phone number ID'), 'phone-1');
-    await userEvent.type(screen.getByLabelText('Business ID'), 'waba-1');
-    await userEvent.click(screen.getByRole('button', { name: 'Complete connection' }));
+    expect(await screen.findByText(/Complete Meta Embedded Signup in the popup/)).toBeVisible();
+    expect(screen.queryByLabelText('Authorization code')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Phone number ID')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Business ID')).not.toBeInTheDocument();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://www.facebook.com',
+      data: { type: 'WA_EMBEDDED_SIGNUP', data: { code: 'code-1', phone_number_id: 'phone-1', business_id: 'waba-1' } },
+    }));
 
     expect(await screen.findByText(/Connected Sales/)).toBeVisible();
     expect(calls).toBeGreaterThan(0);
+  });
+
+  it('ignores postMessages from origins other than Meta', async () => {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      const key = String(url);
+      if (key === '/api/v1/auth/me') return new Response(JSON.stringify(me));
+      if (key === '/api/v1/channels') return new Response(JSON.stringify([]));
+      if (key === '/api/v1/channels/connect/attempt') return new Response(JSON.stringify({
+        attemptId: 'a1', state: 'state-1', nonce: 'nonce-1', metaAppId: 'app-1', configurationId: 'config-1',
+        graphVersion: 'v23.0', embeddedSignupVersion: 'v4', expiresAt: '2026-01-01T00:10:00Z',
+      }));
+      throw new Error(`unexpected ${url}`);
+    }) as typeof fetch;
+    renderWorkspace(<ChannelsPage />);
+
+    await userEvent.type(await screen.findByLabelText('Channel display name'), 'Sales');
+    await userEvent.click(screen.getByRole('button', { name: 'Start Embedded Signup' }));
+    await screen.findByText(/Complete Meta Embedded Signup in the popup/);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://evil.example',
+      data: { type: 'WA_EMBEDDED_SIGNUP', data: { code: 'code-1', phone_number_id: 'phone-1', business_id: 'waba-1' } },
+    }));
+
+    expect(screen.queryByText(/Connected Sales/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Complete Meta Embedded Signup in the popup/)).toBeVisible();
   });
 });
 

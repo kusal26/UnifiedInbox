@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAs, mailpitToken, PASSWORD, registerOwner, slug } from './helpers';
+import { loginAs, mailpitToken, PASSWORD, registerOwner, slug, API } from './helpers';
 
 test('registration flows through verification into login', async ({ page, request }) => {
   const workspace = slug('e2e-auth');
@@ -21,6 +21,31 @@ test('registration flows through verification into login', async ({ page, reques
 
   await loginAs(request, workspace, email, page);
   await expect(page.getByText(workspace, { exact: false }).first()).toBeVisible();
+});
+
+test('sessions are listed and revoked from a second device', async ({ request }) => {
+  const workspace = slug('e2e-sessions');
+  const email = `${workspace}@example.com`;
+  await registerOwner(request, workspace, email);
+
+  // Two independent logins create two distinct refresh-token sessions.
+  const first = await request.post(`${API}/api/v1/auth/login`, { data: { tenantSlug: workspace, email, password: PASSWORD } });
+  expect(first.ok()).toBeTruthy();
+  const second = await request.post(`${API}/api/v1/auth/login`, { data: { tenantSlug: workspace, email, password: PASSWORD } });
+  expect(second.ok()).toBeTruthy();
+  const token = (await second.json()).accessToken as string;
+
+  const list = await request.get(`${API}/api/v1/auth/sessions`, { headers: { Authorization: `Bearer ${token}` } });
+  expect(list.ok()).toBeTruthy();
+  const sessions = (await list.json()) as Array<{ id: string; isCurrent: boolean }>;
+  expect(sessions.length).toBe(2);
+
+  // Revoking the non-current session leaves exactly one active device.
+  const other = sessions.find((session) => !session.isCurrent)!;
+  const revoked = await request.delete(`${API}/api/v1/auth/sessions/${other.id}`, { headers: { Authorization: `Bearer ${token}` } });
+  expect(revoked.ok()).toBeTruthy();
+  const after = (await (await request.get(`${API}/api/v1/auth/sessions`, { headers: { Authorization: `Bearer ${token}` } })).json()) as Array<{ id: string }>;
+  expect(after.map((session) => session.id)).not.toContain(other.id);
 });
 
 test('forgot and reset password restores access', async ({ page, request }) => {

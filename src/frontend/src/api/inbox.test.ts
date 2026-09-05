@@ -56,6 +56,21 @@ describe('createInboxApi', () => {
     });
   });
 
+  it('sends an approved template with its components as a nested request', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'm1', conversationId: 'c1', kind: 0, body: '', createdAt: '', sequence: 1 }), { status: 202 }));
+
+    await createInboxApi(() => 'token-1', fetcher).sendMessage('c1', '', 'key-tpl', {
+      template: { name: 'order_shipping', language: 'en_US', components: [{ type: 'BODY', parameters: [{ type: 'text', text: 'order 42' }] }] },
+    });
+
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/conversations/c1/messages', expect.objectContaining({
+      body: JSON.stringify({
+        body: '',
+        template: { name: 'order_shipping', language: 'en_US', components: [{ type: 'BODY', parameters: [{ type: 'text', text: 'order 42' }] }] },
+      }),
+    }));
+  });
+
   it('sends numeric statuses expected by the ASP.NET stub', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'c1', status: 0 })));
 

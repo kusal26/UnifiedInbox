@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxApi } from '../api/inbox';
 import type { AdminApi } from '../api/admin';
 import type { AttachmentsApi } from '../api/attachments';
+import { ApiError } from '../api/client';
 import { AuthProvider } from '../auth/AuthProvider';
 import { InboxPage } from './InboxPage';
 import { ConversationTimeline } from './ConversationTimeline';
@@ -40,12 +41,18 @@ function adminStub(overrides: Partial<AdminApi> = {}): AdminApi {
 }
 
 function attachmentsStub(overrides: Partial<AttachmentsApi> = {}): AttachmentsApi {
-  return { upload: vi.fn(), ...overrides } as unknown as AttachmentsApi;
+  const staged = { id: 'att-1', fileName: 'photo.jpg', contentType: 'image/jpeg', size: 5, expiresAt: '2026-01-01T00:00:00Z', objectKey: 'k', uploadUrl: 'https://storage.test/k?put=1' };
+  return {
+    stage: vi.fn().mockResolvedValue(staged),
+    complete: vi.fn().mockResolvedValue({ completed: true }),
+    download: vi.fn(), upload: vi.fn(),
+    ...overrides,
+  } as unknown as AttachmentsApi;
 }
 
-function renderPage(api: InboxApi, admin?: AdminApi, attachments?: AttachmentsApi) {
+function renderPage(api: InboxApi, admin?: AdminApi, attachments?: AttachmentsApi, attachmentPut?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><AuthProvider login={vi.fn().mockRejectedValue(new Error('no session'))}><InboxPage api={api} admin={admin} attachments={attachments} /></AuthProvider></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><AuthProvider login={vi.fn().mockRejectedValue(new Error('no session'))}><InboxPage api={api} admin={admin} attachments={attachments} attachmentPut={attachmentPut} /></AuthProvider></QueryClientProvider>);
 }
 
 describe('InboxPage', () => {
@@ -149,11 +156,12 @@ describe('conversation actions', () => {
     expect(await screen.findByText('Private to staff')).toBeVisible();
   });
 
-  it('inserts live canned responses and emoji, and uploads attachments', async () => {
-    const upload = vi.fn().mockResolvedValue('att-1');
+  it('inserts live canned responses and emoji, and uploads attachments to Ready', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ id: 'message-9', conversationId: jamie.id, kind: 'Message', body: 'Thanks', createdAt: '', sequence: 10 });
+    const attachments = attachmentsStub();
+    const put = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     const admin = adminStub({ cannedResponses: vi.fn().mockResolvedValue([{ id: 'cr-1', title: 'Thanks for reaching out', shortcut: '/thanks', content: 'Thanks for reaching out' }]) });
-    renderPage(apiStub({ sendMessage }), admin, attachmentsStub({ upload }));
+    renderPage(apiStub({ sendMessage }), admin, attachments, put);
 
     await screen.findByText('Jamie Customer');
     await userEvent.click(screen.getByRole('button', { name: 'Canned responses' }));
@@ -165,11 +173,77 @@ describe('conversation actions', () => {
 
     const file = new File(['bytes'], 'photo.jpg', { type: 'image/jpeg' });
     await userEvent.upload(screen.getByLabelText('Attach files'), file);
-    await waitFor(() => expect(upload).toHaveBeenCalled());
-    expect(await screen.findByText('Attached: photo.jpg')).toBeVisible();
+    expect(await screen.findByRole('status', { name: 'photo.jpg Ready' })).toBeVisible();
 
     await userEvent.click(screen.getByRole('button', { name: 'Send reply' }));
     await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(jamie.id, 'Thanks for reaching out 🙂', expect.any(String), expect.objectContaining({ attachmentIds: ['att-1'] })));
+  });
+
+  it('shows attachment scanning and rejects an attachment the scanner refuses', async () => {
+    const attachments = attachmentsStub({
+      complete: vi.fn().mockRejectedValue(new ApiError(400, 'The attachment is malicious.', 'malicious_attachment')),
+    });
+    const put = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    renderPage(apiStub(), undefined, attachments, put);
+
+    await screen.findByText('Jamie Customer');
+    const file = new File(['bytes'], 'evil.jpg', { type: 'image/jpeg' });
+    await userEvent.upload(screen.getByLabelText('Attach files'), file);
+
+    expect(await screen.findByRole('status', { name: 'evil.jpg Rejected' })).toBeVisible();
+    expect(await screen.findByText(/malicious/)).toBeVisible();
+  });
+
+  it('keeps the composed text and requires a template when the window is closed', async () => {
+    const sendMessage = vi.fn()
+      .mockRejectedValueOnce(new ApiError(422, 'The 24-hour customer service window is closed.', 'messaging_window_closed'))
+      .mockResolvedValueOnce({ id: 'message-11', conversationId: jamie.id, kind: 'Message', body: 'order_shipping (en_US)', createdAt: '', sequence: 11 });
+    const channelTemplates = vi.fn().mockResolvedValue([
+      { name: 'order_shipping', language: 'en_US', category: 'UTILITY', status: 'APPROVED', components: [{ type: 'BODY', parameterCount: 1 }, { type: 'HEADER', parameterCount: 0 }] },
+    ]);
+    const admin = adminStub({ channelTemplates });
+    renderPage(apiStub({ sendMessage }), admin);
+
+    await screen.findByText('Jamie Customer');
+    await userEvent.type(screen.getByLabelText('Message'), 'Is my order on its way?');
+    await userEvent.click(screen.getByRole('button', { name: 'Send reply' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/customer service window is closed/);
+    expect(screen.getByLabelText('Message')).toHaveValue('Is my order on its way?');
+    await screen.findByRole('option', { name: 'order_shipping (en_US)' });
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Approved template' }), 'order_shipping (en_US)');
+    await userEvent.type(screen.getByLabelText('BODY parameter 1'), 'order 42');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm template' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/approved template order_shipping/);
+    await userEvent.click(screen.getByRole('button', { name: 'Send reply' }));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+    expect(sendMessage.mock.calls[1][3]).toEqual(expect.objectContaining({
+      template: { name: 'order_shipping', language: 'en_US', components: [{ type: 'BODY', parameters: [{ type: 'text', text: 'order 42' }] }] },
+    }));
+  });
+
+  it('sends an approved template without free text outside the window', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ id: 'message-10', conversationId: jamie.id, kind: 'Message', body: 'welcome (en_US)', createdAt: '', sequence: 11 });
+    const admin = adminStub({
+      channelTemplates: vi.fn().mockResolvedValue([
+        { name: 'welcome', language: 'en_US', category: 'UTILITY', status: 'APPROVED', components: [] },
+      ]),
+    });
+    renderPage(apiStub({ sendMessage }), admin);
+
+    await screen.findByText('Jamie Customer');
+    await userEvent.click(screen.getByRole('button', { name: 'Use an approved template' }));
+    await screen.findByRole('option', { name: 'welcome (en_US)' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Approved template' }), 'welcome (en_US)');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm template' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/approved template welcome/);
+    await userEvent.click(screen.getByRole('button', { name: 'Send reply' }));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(jamie.id, 'welcome (en_US)', expect.any(String), expect.objectContaining({
+      template: { name: 'welcome', language: 'en_US', components: [] },
+    })));
   });
 
   it('rolls back optimistic replies when sending fails', async () => {

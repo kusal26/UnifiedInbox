@@ -2,14 +2,14 @@ import { test, expect } from '@playwright/test';
 import { loginAs, registerOwner, slug } from './helpers';
 
 const routes = [
-  ['Shared Inbox', '/'],
+  ['Conversations', '/'],
   ['Overview', '/overview'],
   ['Channels', '/channels'],
   ['Team', '/team'],
   ['Canned Responses', '/canned'],
   ['Notifications', '/notifications'],
   ['Audit Log', '/audit'],
-  ['Settings', '/settings'],
+  ['Workspace Settings', '/settings'],
 ] as const;
 
 test('every workspace route loads against the real API', async ({ page, request }) => {
@@ -18,9 +18,9 @@ test('every workspace route loads against the real API', async ({ page, request 
   await registerOwner(request, workspace, email);
   await loginAs(request, workspace, email, page);
 
-  for (const [label, path] of routes) {
+  for (const [heading, path] of routes) {
     await page.goto(path);
-    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
   }
 });
 
