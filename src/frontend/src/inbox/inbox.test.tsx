@@ -56,6 +56,17 @@ function renderPage(api: InboxApi, admin?: AdminApi, attachments?: AttachmentsAp
 }
 
 describe('InboxPage', () => {
+  it('returns to the mobile list without losing the selected conversation', async () => {
+    const { container } = renderPage(apiStub());
+    const row = await screen.findByRole('button', { name: /Jamie Customer/ });
+    await userEvent.click(row);
+    expect(container.querySelector('.inbox-page')).toHaveClass('mobile-thread-open');
+    await userEvent.click(screen.getByRole('button', { name: 'Back to conversations' }));
+    expect(container.querySelector('.inbox-page')).not.toHaveClass('mobile-thread-open');
+    expect(row).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(row);
+    expect(container.querySelector('.inbox-page')).toHaveClass('mobile-thread-open');
+  });
   it('loads conversations and filters Jamie in Open conversations', async () => {
     renderPage(apiStub());
 
@@ -63,7 +74,7 @@ describe('InboxPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open' }));
     await userEvent.type(screen.getByLabelText('Search conversations'), 'Jamie');
 
-    expect(screen.getByText('Jamie Customer')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Conversation with Jamie Customer' })).toBeVisible();
   });
 
   it('loads the next cursor page on demand', async () => {

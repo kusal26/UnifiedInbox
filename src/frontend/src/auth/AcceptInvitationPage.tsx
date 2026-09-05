@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createAdminApi } from '../api/admin';
 import { ApiError } from '../api/client';
+import { FormError } from '../components/ui';
 
 export function AcceptInvitationPage() {
   const navigate = useNavigate();
@@ -30,7 +31,7 @@ export function AcceptInvitationPage() {
       <p className="eyebrow">Unified Inbox</p>
       <h1 id="invite-heading">Accept your invitation</h1>
       <p>Your workspace invited you by email. Choose your name and password to join.</p>
-      {error && <div role="alert" tabIndex={-1}>{error}</div>}
+      {error && <FormError message={error} />}
       <label>Invitation token<textarea name="token" aria-label="Invitation token" value={token} onChange={(event) => setToken(event.target.value)} required /></label>
       <label>Your name<input name="displayName" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required autoComplete="name" /></label>
       <label>Password<input name="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={12} autoComplete="new-password" /></label>

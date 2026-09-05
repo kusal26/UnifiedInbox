@@ -20,6 +20,10 @@ export function ConversationTimeline({ state, items, onRetry }: ConversationTime
         {item.kind === 'InternalNote' && <span>Private to staff</span>}
       </div>
       <p>{item.body}</p>
+      <div className="timeline-footer">
+        {item.createdAt && !Number.isNaN(Date.parse(item.createdAt)) && <time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>}
+        {item.status && <span>{item.status}</span>}
+      </div>
     </li>)}
   </ol>;
 }

@@ -14,7 +14,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
   }, []);
   return <ToastContext.Provider value={{ showToast }}>
     {children}
-    <div aria-live="polite" aria-atomic="true" role="status">
+    <div className="toast-stack" aria-live="polite" aria-atomic="true" role="status">
       {toasts.map((toast) => <div key={toast.id} data-kind={toast.kind}>{toast.message}</div>)}
     </div>
   </ToastContext.Provider>;

@@ -13,19 +13,21 @@ export function ChannelRepairPage() {
   const [attempt, setAttempt] = useState<Awaited<ReturnType<typeof admin.beginReauthorize>> | null>(null);
   const [result, setResult] = useState('');
   const [error, setError] = useState('');
+  const [pending, setPending] = useState(false);
 
   const channels = useQuery({ queryKey: ['channels'], queryFn: () => admin.channels(), enabled: Boolean(user) && canAdmin(user) });
   const channel = channels.data?.find((item) => item.id === channelId);
 
   const start = async () => {
-    if (!channelId) return;
+    if (!channelId || pending) return;
+    setPending(true);
     setResult('');
     setError('');
     try {
       setAttempt(await admin.beginReauthorize(channelId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The repair attempt could not be started.');
-    }
+    } finally { setPending(false); }
   };
 
   const finish = async (session: { code: string; phoneNumberId: string; businessId: string }) => {
@@ -55,7 +57,7 @@ export function ChannelRepairPage() {
           {!attempt
             ? <form onSubmit={(event) => { event.preventDefault(); void start(); }}>
                 <p>Reconnect this WhatsApp number through Meta Embedded Signup. The previous access was revoked or rejected by the provider.</p>
-                <button>Start repair</button>
+                <button type="submit" disabled={pending}>{pending ? 'Starting…' : 'Start repair'}</button>
               </form>
             : <EmbeddedSignupButton attempt={attempt} onSession={(session) => void finish(session)} onError={setError} />}
           {result && <p role="status">{result}</p>}

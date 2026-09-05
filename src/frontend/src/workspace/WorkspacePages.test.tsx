@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ChannelsPage, NotificationsPage, OverviewPage, TeamPage } from './WorkspacePages';
+import { CannedPage, ChannelsPage, NotificationsPage, OverviewPage, TeamPage } from './WorkspacePages';
 import { AuthProvider } from '../auth/AuthProvider';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -36,6 +36,18 @@ describe('OverviewPage', () => {
 });
 
 describe('TeamPage', () => {
+  it('keeps the invitation email and explains a failed request', async () => {
+    globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (init?.method === 'POST') return new Response(JSON.stringify({ detail: 'Invitation could not be sent.' }), { status: 503 });
+      return new Response(JSON.stringify(String(url).endsWith('/me') ? me : []));
+    }) as typeof fetch;
+    renderWorkspace(<TeamPage />);
+    await userEvent.type(await screen.findByLabelText('Invite email'), 'retry@x.test');
+    await userEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invitation could not be sent.');
+    expect(screen.getByLabelText('Invite email')).toHaveValue('retry@x.test');
+    expect(screen.getByRole('button', { name: 'Send invitation' })).toBeEnabled();
+  });
   it('invites a member and lists pending invitations', async () => {
     stubFetch({
       '/api/v1/auth/me': me,
@@ -48,6 +60,27 @@ describe('TeamPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/invitations', expect.objectContaining({ method: 'POST' })));
     expect(await screen.findByText(/b@x.test/)).toBeVisible();
+  });
+});
+
+describe('Canned response recovery', () => {
+  it('retains a draft when creation fails and resets it only after success', async () => {
+    let fail = true;
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      if (init?.method === 'POST') return fail ? new Response(JSON.stringify({ detail: 'Please try again.' }), { status: 503 }) : new Response(JSON.stringify({ id: 'new' }));
+      return new Response('[]');
+    }) as typeof fetch;
+    renderWorkspace(<CannedPage />);
+    await userEvent.type(screen.getByLabelText('Title'), 'Welcome');
+    await userEvent.type(screen.getByLabelText('Shortcut'), '/welcome');
+    await userEvent.type(screen.getByLabelText('Content'), 'Hello there');
+    await userEvent.click(screen.getByRole('button', { name: 'Create response' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please try again.');
+    expect(screen.getByLabelText('Content')).toHaveValue('Hello there');
+    fail = false;
+    await userEvent.click(screen.getByRole('button', { name: 'Create response' }));
+    await screen.findByText('Response created.');
+    expect(screen.getByLabelText('Content')).toHaveValue('');
   });
 });
 
@@ -128,7 +161,7 @@ describe('NotificationsPage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Mark read' }));
     await waitFor(() => expect(read).toEqual(['n1']));
-    expect(await screen.findByText('message.received')).toBeVisible();
+    expect(await screen.findByText('New customer messages')).toBeVisible();
   });
 });
 

@@ -1,7 +1,7 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, PropsWithChildren } from 'react';
+import { useEffect, useRef, type ButtonHTMLAttributes, type HTMLAttributes, type PropsWithChildren } from 'react';
 
-export function Button({ children, ...props }: PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>>) {
-  return <button type="button" {...props}>{children}</button>;
+export function Button({ children, variant = 'secondary', className = '', ...props }: PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' }>) {
+  return <button type="button" className={`${variant} ${className}`} {...props}>{children}</button>;
 }
 
 export function Panel({ children, ...props }: PropsWithChildren<HTMLAttributes<HTMLElement>>) {
@@ -17,7 +17,7 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 export function EmptyState({ title, children }: PropsWithChildren<{ title: string }>) {
-  return <section aria-label={title}><h2>{title}</h2>{children}</section>;
+  return <section className="empty-state" aria-label={title}><h2>{title}</h2>{children}</section>;
 }
 
 export function LoadingState({ label = 'Loading' }: { label?: string }) {
@@ -26,4 +26,10 @@ export function LoadingState({ label = 'Loading' }: { label?: string }) {
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return <section role="alert"><p>{message}</p>{onRetry && <Button onClick={onRetry}>Try again</Button>}</section>;
+}
+
+export function FormError({ message }: { message: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { ref.current?.focus(); }, [message]);
+  return <div ref={ref} tabIndex={-1} role="alert">{message}</div>;
 }

@@ -9,6 +9,7 @@ import { ConversationTimeline } from './ConversationTimeline';
 import { AttachmentComposer } from './AttachmentComposer';
 import { TemplatePicker } from './TemplatePicker';
 import type { Fetcher } from '../api/client';
+import { Dialog } from '../components/Dialog';
 
 const statuses: Array<ConversationStatus | 'All'> = ['All', 'Open', 'Pending', 'Closed'];
 
@@ -25,10 +26,25 @@ export function InboxPage(props: InboxPageProps) {
   const attachments = props.attachments ?? clients.attachments;
   const queryClient = useQueryClient();
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '');
+  const [mobileThread, setMobileThread] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const searchFromUrl = new URLSearchParams(window.location.search).get('q') ?? '';
+  useEffect(() => { setSearch(searchFromUrl); }, [searchFromUrl]);
+  // Back/forward navigation does not re-render on its own; re-sync the filter.
+  useEffect(() => {
+    const sync = () => setSearch(new URLSearchParams(window.location.search).get('q') ?? '');
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
   const [filter, setFilter] = useState<ConversationStatus | 'All'>('All');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // One shared customer-notes draft: the inline panel and the dialog panel are two
+  // instances of the same editor, so an unsaved draft must survive switching between them.
+  const [notesDraft, setNotesDraft] = useState<string | null>(null);
+  useEffect(() => { setNotesDraft(null); }, [selectedId]);
 
   const listKey = ['conversations', search, filter, unreadOnly] as const;
   const conversationsQuery = useInfiniteQuery<ConversationPage, Error, InfiniteData<ConversationPage>, QueryKey, string | undefined>({
@@ -140,37 +156,42 @@ export function InboxPage(props: InboxPageProps) {
     },
   });
 
-  return <section className={`inbox-page ${selected ? 'has-selection' : ''}`}>
+  return <section className={`inbox-page ${mobileThread && selected ? 'mobile-thread-open' : ''}`}>
     <aside className="inbox-list" aria-label="Conversations">
       <header><p className="eyebrow">Shared inbox</p><h1>Conversations</h1></header>
       <label className="inbox-search">Search conversations<input aria-label="Search conversations" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <div className="inbox-filters" aria-label="Conversation status filters">
-        {statuses.map((status) => <button className={filter === status ? 'active' : ''} key={status} onClick={() => setFilter(status)}>{status}</button>)}
-        <button className={unreadOnly ? 'active' : ''} onClick={() => setUnreadOnly((value) => !value)}>Unread</button>
+        {statuses.map((status) => <button aria-pressed={filter === status} className={filter === status ? 'active' : ''} key={status} onClick={() => setFilter(status)}>{status}</button>)}
+        <button aria-pressed={unreadOnly} className={unreadOnly ? 'active' : ''} onClick={() => setUnreadOnly((value) => !value)}>Unread</button>
       </div>
-      <div className="conversation-list">
+      <div className="conversation-list" ref={listRef}>
         {conversationsQuery.isPending && <p role="status">Loading conversations…</p>}
         {conversationsQuery.isError && <p role="alert">Conversations could not be loaded. <button onClick={() => conversationsQuery.refetch()}>Try again</button></p>}
-        {conversations.map((conversation) => <button className={`conversation-row ${conversation.id === selectedId ? 'selected' : ''}`} key={conversation.id} onClick={() => setSelectedId(conversation.id)}>
+        {!conversationsQuery.isPending && !conversationsQuery.isError && conversations.length === 0 && <div className="empty-state"><h2>{search || filter !== 'All' || unreadOnly ? 'No matching conversations' : 'Your inbox is ready'}</h2><p>{search || filter !== 'All' || unreadOnly ? 'Try another search or clear your filters.' : 'New customer messages will appear here once a channel is connected.'}</p>{(search || filter !== 'All' || unreadOnly) && <button onClick={() => { setSearch(''); setFilter('All'); setUnreadOnly(false); }}>Clear filters</button>}</div>}
+        {conversations.map((conversation) => <button aria-pressed={conversation.id === selectedId} className={`conversation-row ${conversation.id === selectedId ? 'selected' : ''}`} key={conversation.id} onClick={() => { setSelectedId(conversation.id); setMobileThread(true); }}>
           <span className="conversation-avatar">{conversation.contactName.slice(0, 1)}</span><span><strong>{conversation.contactName}</strong><small>{conversation.preview}</small></span>
           {conversation.unread && <i aria-label="Unread" />}
         </button>)}
         {conversationsQuery.hasNextPage && <button onClick={() => conversationsQuery.fetchNextPage()} disabled={conversationsQuery.isFetchingNextPage}>{conversationsQuery.isFetchingNextPage ? 'Loading…' : 'Load more'}</button>}
       </div>
     </aside>
-    <main className="inbox-thread">
-      {!selected ? <p className="timeline-state">Choose a conversation to get started.</p> : <>
+    <section className="inbox-thread" aria-label="Conversation thread">
+      {!selected ? <div className="timeline-state"><h2>A clear view of every conversation</h2><p>{conversations.length ? 'Select a customer to view their messages.' : 'Messages and private team notes will appear here.'}</p></div> : <>
         <ThreadHeader
           conversation={selected}
           onStatus={(status) => statusMutation.mutate({ id: selected.id, status })}
           statusError={statusMutation.isError}
+          onBack={() => { setMobileThread(false); requestAnimationFrame(() => listRef.current?.querySelector<HTMLButtonElement>('.selected')?.focus()); }}
+          onDetails={() => setDetailsOpen(true)}
         />
+        <div className="timeline-scroll">
         <ConversationTimeline
           state={activityQuery.isPending ? 'loading' : activityQuery.isError ? 'error' : timeline.length ? 'ready' : 'empty'}
           items={timeline}
           onRetry={() => activityQuery.refetch()}
         />
         {activityQuery.hasNextPage && <button onClick={() => activityQuery.fetchNextPage()} disabled={activityQuery.isFetchingNextPage}>{activityQuery.isFetchingNextPage ? 'Loading…' : 'Load older messages'}</button>}
+        </div>
         <Composer
           key={selected.id}
           conversationId={selected.id}
@@ -183,20 +204,30 @@ export function InboxPage(props: InboxPageProps) {
           onNote={(body) => noteMutation.mutateAsync({ id: selected.id, body })}
         />
       </>}
-    </main>
-    {selected && <CustomerPanel conversationId={selected.id} api={api} />}
+    </section>
+    {selected && <CustomerPanel conversationId={selected.id} api={api} notes={notesDraft} onNotesChange={setNotesDraft} />}
+    {selected && detailsOpen && <Dialog title="Customer details" onClose={() => setDetailsOpen(false)}><CustomerPanel conversationId={selected.id} api={api} notes={notesDraft} onNotesChange={setNotesDraft} /></Dialog>}
   </section>;
 }
 
-function ThreadHeader({ conversation, onStatus, statusError }: { conversation: Conversation; onStatus(status: ConversationStatus): void; statusError: boolean }) {
+function ThreadHeader({ conversation, onStatus, statusError, onBack, onDetails }: { conversation: Conversation; onStatus(status: ConversationStatus): void; statusError: boolean; onBack(): void; onDetails(): void }) {
   const [open, setOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (open) menu.current?.querySelector<HTMLButtonElement>('button')?.focus(); }, [open]);
   return <header className="thread-header">
-    <div><h2 aria-label={`Conversation with ${conversation.contactName}`}>Conversation</h2><p>{conversation.platform}</p></div>
-    <div className="status-control">
-      <button aria-label={`Status: ${conversation.status}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>{conversation.status}</button>
-      {open && <div role="menu">{(['Open', 'Pending', 'Closed'] as ConversationStatus[]).map((status) => <button role="menuitem" key={status} onClick={() => { onStatus(status); setOpen(false); }}>{status}</button>)}</div>}
+    <button className="mobile-back" onClick={onBack} aria-label="Back to conversations">←</button>
+    <div><h2 aria-label={`Conversation with ${conversation.contactName}`}>{conversation.contactName}</h2><p>{conversation.platform}</p></div>
+    <div className="thread-actions"><button onClick={onDetails}>Customer details</button><div className="status-control" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
+      <button ref={trigger} aria-haspopup="menu" aria-label={`Status: ${conversation.status}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>{conversation.status}</button>
+      {open && <div ref={menu} role="menu" aria-label="Conversation status" onKeyDown={event => {
+        const options = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? []);
+        const index = options.indexOf(document.activeElement as HTMLButtonElement);
+        if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); }
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { event.preventDefault(); options[event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); }
+      }}>{(['Open', 'Pending', 'Closed'] as ConversationStatus[]).map((status) => <button role="menuitem" key={status} onClick={() => { onStatus(status); setOpen(false); trigger.current?.focus(); }}>{status}</button>)}</div>}
       {statusError && <p role="alert">Status change failed.</p>}
-    </div>
+    </div></div>
   </header>;
 }
 
@@ -289,7 +320,7 @@ function Composer(props: ComposerProps) {
   const openPicker = () => { setTemplateOpen(true); setError(''); };
 
   return <section className={`composer ${mode === 'note' ? 'is-note' : ''}`} aria-label="Message composer">
-    <div className="composer-modes"><button className={mode === 'reply' ? 'active' : ''} onClick={() => setMode('reply')}>Reply</button><button className={mode === 'note' ? 'active' : ''} onClick={() => setMode('note')}>Internal note</button></div>
+    <div className="composer-modes"><button aria-pressed={mode === 'reply'} className={mode === 'reply' ? 'active' : ''} onClick={() => setMode('reply')}>Reply</button><button aria-pressed={mode === 'note'} className={mode === 'note' ? 'active' : ''} onClick={() => setMode('note')}>Internal note</button></div>
     <textarea aria-label="Message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder={mode === 'note' ? 'Write a private note' : 'Write a reply'} />
     {mode === 'reply' && !templateOpen && <button type="button" aria-label="Use an approved template" onClick={openPicker}>{template ? 'Change template' : 'Use a template'}</button>}
     {mode === 'reply' && templateOpen && <TemplatePicker
@@ -300,7 +331,7 @@ function Composer(props: ComposerProps) {
       onConfirm={(selection) => { if (selection) dropAttachments(); setTemplate(selection); setTemplateOpen(false); setError(''); }}
     />}
     <div className="composer-actions">
-      <button aria-label="Canned responses" onClick={() => setCannedOpen((open) => !open)}>Canned responses</button>
+      <button aria-label="Canned responses" aria-expanded={cannedOpen} onClick={() => setCannedOpen((open) => !open)}>Canned responses</button>
       <button aria-label="Add emoji" onClick={() => setMessage((current) => `${current}${current ? ' ' : ''}🙂`)}>🙂</button>
       {mode === 'reply' && <AttachmentComposer
         attachments={props.attachments}
@@ -314,7 +345,11 @@ function Composer(props: ComposerProps) {
     </div>
     {template && <p role="status">Sending as approved template {template.name} ({template.language}).</p>}
     {error && <p role="alert">{error}</p>}
-    {cannedOpen && <div className="canned-menu">
+    {cannedOpen && <div className="canned-menu" onKeyDown={event => { if (event.key === 'Escape') { setCannedOpen(false); event.currentTarget.closest('.composer')?.querySelector<HTMLButtonElement>('[aria-label="Canned responses"]')?.focus(); } }}>
+      {cannedQuery.isPending && <p role="status">Loading saved responses…</p>}
+      {cannedQuery.isError && <p role="alert">Saved responses could not be loaded. <button onClick={() => cannedQuery.refetch()}>Try again</button></p>}
+      {!cannedQuery.isPending && !cannedQuery.isError && responses.length === 0 && <p>No saved responses match your search.</p>}
+      <button onClick={() => setCannedOpen(false)}>Close saved responses</button>
       <input aria-label="Search canned responses" value={cannedSearch} onChange={(event) => setCannedSearch(event.target.value)} autoFocus />
       {responses.map((response) => <button key={response.id} onClick={() => { setMessage((current) => current ? `${current} ${response.content}` : response.content); setCannedOpen(false); }}>{response.title}</button>)}
     </div>}
@@ -330,11 +365,9 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof ApiError ? error.code : undefined;
 }
 
-function CustomerPanel({ conversationId, api }: { conversationId: string; api: InboxApi }) {
+function CustomerPanel({ conversationId, api, notes, onNotesChange }: { conversationId: string; api: InboxApi; notes: string | null; onNotesChange(value: string): void }) {
   const queryClient = useQueryClient();
   const detailsQuery = useQuery({ queryKey: ['conversation', conversationId], queryFn: () => api.getConversation(conversationId) });
-  const [notes, setNotes] = useState<string | null>(null);
-  useEffect(() => { setNotes(null); }, [conversationId]);
   const notesMutation = useMutation({
     mutationFn: (value: string | null) => api.updateCustomerNotes(conversationId, value),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] }),
@@ -343,11 +376,12 @@ function CustomerPanel({ conversationId, api }: { conversationId: string; api: I
   return <aside className="customer-panel" aria-label="Customer details">
     <h2>Customer</h2>
     {detailsQuery.isPending && <p role="status">Loading…</p>}
+    {detailsQuery.isError && <p role="alert">Customer details could not be loaded. <button onClick={() => detailsQuery.refetch()}>Try again</button></p>}
     {details && <>
-      <strong aria-label={details.contactName}>Contact profile</strong>
+      <strong aria-label={details.contactName}>{details.contactName}</strong>
       <p>{details.platform} conversation</p>
       <p>{details.phone}{details.email ? ` · ${details.email}` : ''}</p>
-      <label>Customer notes<textarea aria-label="Customer notes" value={notes ?? details.customerNotes ?? ''} onChange={(event) => setNotes(event.target.value)} /></label>
+      <label>Customer notes<textarea aria-label="Customer notes" value={notes ?? details.customerNotes ?? ''} onChange={(event) => onNotesChange(event.target.value)} /></label>
       <button onClick={() => notesMutation.mutate(notes ?? details.customerNotes ?? '')} disabled={notesMutation.isPending}>Save notes</button>
       {notesMutation.isSuccess && <p role="status">Notes saved.</p>}
       {notesMutation.isError && <p role="alert">Notes could not be saved.</p>}
