@@ -113,9 +113,11 @@ function ChannelCard({ channel, testing, busy, onTest, onToggle, onDisconnect }:
   const navigate = useNavigate();
   const [healthOpen, setHealthOpen] = useState(false);
   const health = useQuery({ queryKey: ['channel-health', channel.id], queryFn: () => admin.channelHealth(channel.id), enabled: healthOpen });
+  const statusBadge = !channel.isEnabled ? 'is-disabled' : !channel.isHealthy ? 'is-unhealthy' : 'is-active';
+  const statusText = `${channel.status}${channel.isHealthy ? '' : ' · unhealthy'}${channel.isEnabled ? '' : ' · disabled'}`;
   return <article className="workspace-card">
     <h2>{channel.displayName || channel.platform}</h2>
-    <p><span className={`health-dot ${!channel.isEnabled ? 'is-disabled' : !channel.isHealthy ? 'is-unhealthy' : ''}`} /> {channel.status}{channel.isHealthy ? '' : ' · unhealthy'}{channel.isEnabled ? '' : ' · disabled'}</p>
+    <p><span className={`badge ${statusBadge}`}>{statusText}</span></p>
     <small>{channel.lastWebhookAt ? `Last webhook ${new Date(channel.lastWebhookAt).toLocaleString()}` : 'Waiting for the first webhook'}</small>
     <div className="button-row">
       <button onClick={onTest} disabled={busy}>{testing ? 'Testing…' : 'Test connection'}</button>
@@ -162,7 +164,7 @@ export function TeamPage() {
     <LoadState query={members}>{members.data && <div className="table-wrap" role="region" aria-label="Team members" tabIndex={0}><table><thead><tr><th>Member</th><th>Role</th><th>Status</th>{canAdmin(user) && <th>Actions</th>}</tr></thead><tbody>
       {members.data.map((member) => <tr key={member.id}><td><strong>{member.displayName}</strong><br /><small>{member.email}</small></td>
         <td>{isOwner(user) && member.id !== user?.id ? <select disabled={action.pending} aria-label={`Role for ${member.email}`} value={roleLabel(member.role)} onChange={(event) => changeRole(member.id, event.target.value as UserRole)}><option value="Owner">Owner</option><option value="Admin">Admin</option><option value="Agent">Agent</option></select> : roleLabel(member.role)}</td>
-        <td>{member.isActive ? 'Active' : 'Disabled'}</td>
+        <td><span className={member.isActive ? 'badge is-active' : 'badge is-disabled'}>{member.isActive ? 'Active' : 'Disabled'}</span></td>
         {canAdmin(user) && <td>{member.id !== user?.id && <button disabled={action.pending} className={member.isActive ? 'danger' : ''} onClick={() => changeActive(member.id, !member.isActive)}>{member.isActive ? 'Deactivate' : 'Reactivate'}</button>}</td>}</tr>)}
     </tbody></table></div>}</LoadState>
     {canAdmin(user) && <section><h2>Pending invitations</h2><LoadState query={invites}>{invites.data && (invites.data.length === 0 ? <p>No pending invitations.</p> : <ul className="local-list">{invites.data.map((invitation) => <li key={invitation.id}><span>{invitation.email} · {roleLabel(invitation.role)} · expires {new Date(invitation.expiresAt).toLocaleString()}</span><button disabled={action.pending} onClick={() => revoke(invitation.id)}>Revoke</button></li>)}</ul>)}</LoadState></section>}
